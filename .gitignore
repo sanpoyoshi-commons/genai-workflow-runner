@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# venv / uv
+.venv/
+venv/
+
+# 環境変数・秘密（源内endpoint/APIキーは必ず環境変数化）
+.env
+.env.*
+*.key
+*.pem
+
+# テスト・型・カバレッジ
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS/エディタ
+.DS_Store
+*.swp
+.idea/
+
+# gwr run の artifacts 出力（既定 -o gwr-out）
+gwr-out/

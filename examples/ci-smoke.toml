@@ -1,0 +1,35 @@
+version = "1"
+
+# =====================================================================
+# Code Interpreter 実機スモーク：指示＋入力ファイル → サンドボックス実行 → artifacts
+#   analyze(委譲先CI=onpre code-interpreter) で input_text+files を委譲し、
+#   生成された artifacts（グラフ等）と分析テキストを返す。
+# 委譲先は GWR_CI_*（onpre は api+Keycloak）。CSV/Excel のみ対応（onpre 側の入力検証）。
+# =====================================================================
+
+[[inputs]]
+key = "data"
+type = "file"
+label = "対象データ（CSV/Excel）"
+required = true
+accept = ".csv,.xlsx,.xls"
+
+# 指示＋ファイルを委譲先 Code Interpreter に渡す（コード生成・実行は委譲先）
+[[steps]]
+id = "analyze"
+type = "code_interpreter"
+instruction = "カテゴリごとの合計を計算し、横棒グラフ（PNG）で可視化してください。"
+in = { files = "$.files.data" }
+out = { artifacts = "files.charts", output = "vars.msg" }
+
+[[outputs]]
+key = "msg"
+from = "$.vars.msg"
+type = "text"
+label = "分析結果"
+
+[[outputs]]
+key = "charts"
+from = "$.files.charts"
+type = "file"
+label = "生成グラフ"

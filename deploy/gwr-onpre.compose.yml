@@ -1,0 +1,70 @@
+# gwr を onpre（genai-deploy-onpre）の既存ネットワークに参加させ、ExApp として叩けるようにする。
+#
+# 前提：onpre 側を queue プロファイル付きで起動しておくこと（worker が ExApp を実呼び出しする）。
+#   この onpre は secrets オーバーレイで初期化済みのため、必ず 2 ファイル指定で起動する。
+#   cd ../genai-deploy-onpre
+#   EXAPP_ALLOW_PRIVATE_ENDPOINTS=true EXAPP_ENDPOINT_ALLOWLIST=echo-exapp,gwr \
+#     COMPOSE_PROFILES=queue \
+#     docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+#   （allowlist に gwr を足すのは compose 起動時の環境変数上書き＝onpre のファイルは編集しない）
+#
+# ネットワーク名は `docker network ls | grep genai_internal` で確認し、ONPRE_NETWORK で上書き可。
+#
+# 起動：
+#   GWR_API_KEY=<任意> docker compose -f deploy/gwr-onpre.compose.yml up -d --build
+# genai-web の ExApp 登録：endpoint=http://gwr:8000/invoke、apiKey=<GWR_API_KEY>、
+#   リクエスト形式 JSON=`uv run gwr ui-spec examples/poc.toml` の出力。
+
+services:
+  gwr:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: gwr-onpre:latest
+    container_name: gwr          # worker からは http://gwr:8000 で到達（allowlist の host と一致）
+    environment:
+      GWR_API_KEY: ${GWR_API_KEY:-}
+      GWR_FLOW: ${GWR_FLOW:-/app/examples/poc.toml}
+      # 実 LLM 委譲（未設定なら Fake）。onpre は GWR_LLM_ENDPOINT=http://ollama:11434/v1/chat/completions
+      # ＋ GWR_LLM_MODEL=<pull済モデル> ＋ GWR_LLM_ALLOW_INSECURE=true。
+      GWR_LLM_ENDPOINT: ${GWR_LLM_ENDPOINT:-}
+      GWR_LLM_MODEL: ${GWR_LLM_MODEL:-}
+      GWR_LLM_MODE: ${GWR_LLM_MODE:-}
+      GWR_LLM_ALLOW_INSECURE: ${GWR_LLM_ALLOW_INSECURE:-}
+      GWR_LLM_API_KEY: ${GWR_LLM_API_KEY:-}
+      GWR_LLM_SYSTEM_PROMPT: ${GWR_LLM_SYSTEM_PROMPT:-}
+      GWR_LLM_VERIFY_TLS: ${GWR_LLM_VERIFY_TLS:-}
+      GWR_USER_ID: ${GWR_USER_ID:-}
+      # RAG / CI 委譲（多段フロー用。GWR_FLOW=/app/examples/rag-smoke.toml 等で使う）。
+      # onpre は api ルート＋Keycloak Bearer：
+      #   GWR_RAG_ENDPOINT=https://api:3443/api/law-rag/query
+      #   GWR_CI_ENDPOINT=https://api:3443/api/code-interpreter/responses
+      #   GWR_KC_TOKEN_URL=http://keycloak:8080/realms/genai-realm/protocol/openid-connect/token
+      #   GWR_KC_USER=<user> GWR_KC_PASS=<pass>  GWR_VERIFY_TLS=false
+      # 本番（オリジナル源内）は委譲先 ExApp の x-api-key（GWR_RAG_API_KEY/GWR_CI_API_KEY）。
+      GWR_RAG_ENDPOINT: ${GWR_RAG_ENDPOINT:-}
+      GWR_RAG_API_KEY: ${GWR_RAG_API_KEY:-}
+      GWR_CI_ENDPOINT: ${GWR_CI_ENDPOINT:-}
+      GWR_CI_API_KEY: ${GWR_CI_API_KEY:-}
+      GWR_KC_TOKEN_URL: ${GWR_KC_TOKEN_URL:-}
+      GWR_KC_CLIENT_ID: ${GWR_KC_CLIENT_ID:-}
+      GWR_KC_USER: ${GWR_KC_USER:-}
+      GWR_KC_PASS: ${GWR_KC_PASS:-}
+      GWR_VERIFY_TLS: ${GWR_VERIFY_TLS:-}
+      GWR_ALLOW_INSECURE: ${GWR_ALLOW_INSECURE:-}
+      # 委譲先タイムアウト（秒）。law-rag/CI は CPU で数分かかるため既定 600。
+      GWR_TIMEOUT: ${GWR_TIMEOUT:-}
+      # RAG「該当なし」マーカー。源内 RAG は no-match でも非空の文章を返すため、その文を
+      # 注入すると docs=[]（該当なし分岐）になる。FILE=/app/examples/rag-no-result-markers.example.txt
+      # （既定は全行コメントアウト＝無効。有効化するなら # を外して再ビルド、または別ファイルをマウント）。
+      GWR_RAG_NO_RESULT_MARKERS: ${GWR_RAG_NO_RESULT_MARKERS:-}
+      GWR_RAG_NO_RESULT_MARKERS_FILE: ${GWR_RAG_NO_RESULT_MARKERS_FILE:-}
+    networks:
+      - genai_internal
+    restart: unless-stopped
+
+networks:
+  genai_internal:
+    external: true
+    # この onpre の compose プロジェクト名は genai-local。異なる場合は ONPRE_NETWORK で上書き。
+    name: ${ONPRE_NETWORK:-genai-local_genai_internal}

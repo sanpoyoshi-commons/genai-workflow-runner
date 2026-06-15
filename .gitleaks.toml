@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "genai-workflow-runner ホワイトリスト"
+paths = [
+  '''(?i)/tests?/fixtures/''',  # テスト fixture の擬似 token は許容
+]

@@ -1,0 +1,46 @@
+# gwr の pre-commit。secrets 検出は commit 時、重いセキュリティスキャナ（SAST/依存/IaC）は push 時に走る。
+# 有効化：pre-commit install（pre-commit と pre-push の両フックを入れる）。
+# スキャナ用ランナー：semgrep/checkov=uvx、osv-scanner/trivy=docker。
+#   これらが未導入の環境では各フックは自動でスキップされる（push は止めない）。
+# 手動一括：pre-commit run --hook-stage pre-push --all-files
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      # SAST（Python）。findings あれば push を止める（--error で非0終了）。uvx 未導入ならスキップ。
+      - id: semgrep
+        name: semgrep (SAST)
+        entry: bash -c 'if command -v uvx >/dev/null 2>&1; then uvx semgrep scan --error --metrics off --config p/python --config p/security-audit --config p/secrets src/; else echo "[pre-push] uvx 未導入のため semgrep をスキップ"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # 依存の既知脆弱性（uv.lock）。脆弱性検出で非0終了。docker 未導入ならスキップ。
+      - id: osv-scanner
+        name: osv-scanner (deps)
+        entry: bash -c 'if command -v docker >/dev/null 2>&1; then docker run --rm -v "$PWD":/src ghcr.io/google/osv-scanner:latest scan source -r /src; else echo "[pre-push] docker 未導入のため osv-scanner をスキップ"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # IaC（Dockerfile 等）。uvx 未導入ならスキップ。
+      - id: checkov
+        name: checkov (IaC)
+        entry: bash -c 'if command -v uvx >/dev/null 2>&1; then uvx checkov -d . --quiet --compact; else echo "[pre-push] uvx 未導入のため checkov をスキップ"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # FS スキャン（依存脆弱性 / 設定ミス / 秘密）。findings で非0終了。docker 未導入ならスキップ。
+      - id: trivy
+        name: trivy (fs vuln/misconfig/secret)
+        entry: bash -c 'if command -v docker >/dev/null 2>&1; then docker run --rm -v "$PWD":/src aquasec/trivy:latest fs --scanners vuln,misconfig,secret --exit-code 1 --quiet /src; else echo "[pre-push] docker 未導入のため trivy をスキップ"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

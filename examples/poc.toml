@@ -1,0 +1,83 @@
+version = "1"                       # フォーマット版（将来の変更検出用の保険）
+
+# =====================================================================
+# 入力契約：この 1 宣言から (1) 源内 UI の自動生成 (2) 入力検証
+#           (3) Runner への束縛 の 3 つが導出される。
+# =====================================================================
+[[inputs]]
+key = "data"                        # 束縛先スロット → files.data
+type = "file"
+label = "対象Excel"
+required = true
+accept = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# =====================================================================
+# フロー本体：フラットな step リスト＋id 参照ジャンプ。
+#   load → agg(集計) → summarize(要約) → gate(空判定) → write / empty
+# =====================================================================
+
+# Excel を読み込んで表（TableRef）にする
+[[steps]]
+id = "load"
+type = "file.load"
+in = { file = "$.files.data" }
+out = "tables.raw"
+
+# 部署ごとに売上を合計（pandas・groupby は決定論）
+[[steps]]
+id = "agg"
+type = "file.transform"
+engine = "pandas"
+in = { table = "$.tables.raw" }
+out = "tables.summary"
+# 非 ASCII の列名はキーとして引用符で囲む（TOML のベアキーは ASCII のみ）
+ops = [{ op = "groupby", by = ["部署"], agg = { "売上" = "sum" } }]
+
+# 集計結果を要約（LLM はアダプタ委譲。テスト/PoC では Fake）
+[[steps]]
+id = "summarize"
+type = "llm"
+config_type = "answer_generation"
+in = { table = "$.tables.summary" }
+out = "vars.msg"
+
+# 集計が空かどうかで分岐（CEL。Lv1 でコンパイル検証）
+[[steps]]
+id = "gate"
+type = "branch"
+when = "len($.tables.summary.data) == 0"
+then = "empty"                      # 空 → メッセージ生成して終了
+else = "write"                      # 非空 → レポート出力して終了
+
+# 加工済みテーブルを xlsx で出力（artifacts として返る）
+[[steps]]
+id = "write"
+type = "file.write"
+format = "xlsx"
+name = "summary.xlsx"
+in = { table = "$.tables.summary" }
+out = "files.report"
+next = "__end__"                    # 出力後に終了（empty へ落ちないように）
+
+# 空データ時のメッセージ（else を通らなかった場合のみ実行）
+[[steps]]
+id = "empty"
+type = "llm"
+config_type = "answer_generation"
+in = { question = "データが空です" }
+out = "vars.msg"
+
+# =====================================================================
+# 利用者画面への出力（値あり・源内 UI が描画）
+# =====================================================================
+[[outputs]]
+key = "msg"
+from = "$.vars.msg"
+type = "text"
+label = "要約メッセージ"
+
+[[outputs]]
+key = "report"
+from = "$.files.report"
+type = "file"
+label = "加工済みExcel"

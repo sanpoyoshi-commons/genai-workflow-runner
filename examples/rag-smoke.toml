@@ -1,0 +1,56 @@
+version = "1"
+
+# =====================================================================
+# RAG 実機スモーク（複数ノード＋分岐）：質問 → RAG検索 → 該当判定 → 回答/該当なし
+#   retrieve(委譲先RAG=onpre law-rag) → gate(分岐) → hit(LLMで回答) / none(該当なし)
+# 委譲先は2系統：retrieval は GWR_RAG_*（onpre は api+Keycloak）、llm は GWR_LLM_*（ollama 直）。
+# 該当なし判定：源内 RAG は no-match でも「空」ではなく「該当なし」の文章を返すため、
+# その文を運用注入（GWR_RAG_NO_RESULT_MARKERS_FILE＝examples/rag-no-result-markers.example.txt）
+# すると docs=[] となり none 分岐へ落ちる。マーカー未設定時は常に hit 側（本文に該当なし文が出る）。
+# =====================================================================
+
+[[inputs]]
+key = "question"
+type = "textarea"
+label = "質問"
+required = true
+
+# 委譲先 RAG（onpre=law-rag）へ問い合わせ、回答 Doc[] を得る（空＝該当なし）
+[[steps]]
+id = "retrieve"
+type = "retrieval"
+source = "law"
+top_k = 5
+in = { query = "$.vars.question" }
+out = "vars.docs"
+
+# 該当の有無で分岐（CEL）。空なら none、あれば hit。
+[[steps]]
+id = "gate"
+type = "branch"
+when = "len($.vars.docs) == 0"
+then = "none"
+else = "hit"
+
+# 該当あり：取得した法令レポートを文脈に、元の質問へ LLM が回答（RAG→生成）
+[[steps]]
+id = "hit"
+type = "llm"
+config_type = "answer"
+in = { question = "$.vars.question", context = "$.vars.docs[0].content" }
+out = "vars.msg"
+next = "__end__"
+
+# 該当なし：法令を特定できなかった旨を LLM が丁寧に伝える
+[[steps]]
+id = "none"
+type = "llm"
+config_type = "answer"
+in = { question = "該当する法令が見つかりませんでした。利用者にその旨を丁寧に一文で伝えてください。" }
+out = "vars.msg"
+
+[[outputs]]
+key = "msg"
+from = "$.vars.msg"
+type = "text"
+label = "回答"
