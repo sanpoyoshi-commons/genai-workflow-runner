@@ -2,7 +2,8 @@
 
 送信＝inputs 整形、受信＝outputs/artifacts/usage の取り出しを担う。
 
-委譲先 ExApp（RAG / CI）の公開 HTTPS エンドポイントを直接叩く。genai-web（invokeExApp）は介さない。
+委譲先 ExApp（RAG / CI）の公開 HTTPS エンドポイントを直接叩く。
+源内OSS の Web（invokeExApp）は介さない。
 - リクエスト : POST {endpoint} body={inputs[, sessionId]} ヘッダ x-api-key + x-user-id
 - 同期       : {outputs[, artifacts]}
 - 非同期     : 202 → {request_id, status_url} を COMPLETED/ERROR までアダプタ内でポーリング
@@ -42,13 +43,22 @@ _MIME_BY_EXT = {
 
 
 class EnvelopeError(Exception):
-    """委譲先からの ERROR／HTTP 失敗／ポーリング打ち切り。reason はコード。"""
+    """委譲先からの ERROR／HTTP 失敗／ポーリング打ち切り。reason はコード。
 
-    def __init__(self, reason: str, message: str = "", details: Any = None) -> None:
+    message / details は運用者が原因を特定するための情報で、`key=value` 形式に揃える。
+    **利用者への応答には出さない**（ノード層で NodeError に包み替える際に捨てる
+    → gwr.adapters.delegate_errors）。status は委譲先の HTTP ステータスで、
+    包み替えの分類に使う（401/403 → 認証、429 → 混雑、他 → 失敗）。
+    """
+
+    def __init__(
+        self, reason: str, message: str = "", details: Any = None, status: int | None = None
+    ) -> None:
         super().__init__(message or reason)
         self.reason = reason
         self.message = message or reason
         self.details = details
+        self.status = status
 
 
 @dataclass
@@ -131,7 +141,8 @@ class EnvelopeClient:
         user_id: str,
         extra_headers: dict[str, str] | Callable[[], dict[str, str]] | None = None,
     ) -> dict[str, str]:
-        # 本番＝x-api-key（封筒の標準認証）。空キーは送らない。オンプレ版は Bearer を extra_headers で
+        # 本番＝x-api-key（封筒の標準認証）。空キーは送らない。オンプレ版は Bearer を
+        # extra_headers で
         # 載せる＝認証ヘッダの差し替え点で、本番の x-api-key 経路は無改変のまま。
         # extra_headers が callable のときは invoke 毎に解決する（オンプレ版は失効再取得するトークン
         # プロバイダを渡す＝起動時固定だと Bearer が失効して 401 になるため）。
@@ -153,9 +164,14 @@ class EnvelopeClient:
             err = data.get("error")
             if isinstance(err, dict):
                 raise EnvelopeError(
-                    "DELEGATE_ERROR", str(err.get("message", "")), err.get("details")
+                    "DELEGATE_ERROR",
+                    str(err.get("message", "")),
+                    err.get("details"),
+                    status=resp.status,
                 )
-            raise EnvelopeError("HTTP_ERROR", f"status={resp.status}", data.get("error", data))
+            raise EnvelopeError(
+                "HTTP_ERROR", f"status={resp.status}", data.get("error", data), status=resp.status
+            )
 
         data = _parse_body(resp)
         status = data.get("status")
@@ -174,14 +190,14 @@ class EnvelopeClient:
             self.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
             resp = self.transport.request("GET", url, headers=headers)
             if resp.status >= 400:
-                raise EnvelopeError("HTTP_ERROR", f"status={resp.status}")
+                raise EnvelopeError("HTTP_ERROR", f"status={resp.status}", status=resp.status)
             data = _parse_body(resp)
             status = data.get("status")
             if status == COMPLETED:
                 return self._finalize(data)
             if status == ERROR:
                 self._raise_error(data)
-        raise EnvelopeError("POLL_TIMEOUT", f"{self.max_poll_attempts} 回で未完了")
+        raise EnvelopeError("POLL_TIMEOUT", f"attempts={self.max_poll_attempts}")
 
     def _finalize(self, data: dict[str, Any]) -> EnvelopeResult:
         if data.get("status") == ERROR:

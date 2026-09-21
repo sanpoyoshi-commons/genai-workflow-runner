@@ -1,9 +1,10 @@
-# デプロイとgenai-web への ExApp 登録
+# デプロイと源内OSS の Web への ExApp 登録
 
-gwr は「ライブラリ核 ＋ `/invoke` を出す薄い HTTP 層」です。これを [genai-web](https://github.com/digital-go-jp/genai-web) に
-**プロトコル準拠の AI アプリ（ExApp）**として登録すると、源内の WebUI から
-フローを実行できます。認証・チーム権限・課金・endpoint / API キーの管理は
-genai-web 側が持つため、gwr 側で用意するのは次の 3 点だけです。
+gwr は「ライブラリ核 ＋ `/invoke` を出す薄い HTTP 層」です。これを
+[ガバメントAI 源内 OSS](https://github.com/digital-go-jp/genai-web) の Web に
+**プロトコル準拠の AI アプリ（ExApp）**として登録すると、源内OSS の WebUI から
+フローを実行できます。認証・チーム権限・endpoint / API キーの管理は
+源内OSS の Web 側が持つため、gwr 側で用意するのは次の 3 点だけです。
 
 - 公開した `/invoke` の **endpoint**
 - それを守る **apiKey**（`GWR_API_KEY`）
@@ -14,7 +15,7 @@ genai-web 側が持つため、gwr 側で用意するのは次の 3 点だけで
 1. フローを書いて [`gwr validate`](cli.md#validate) で検証。
 2. [`gwr ui-spec`](cli.md#ui-spec) でリクエスト形式 JSON を生成。
 3. gwr を `serve`（または Docker）で公開。
-4. genai-web の ExApp 登録に endpoint / apiKey / リクエスト形式 JSON を入れる。
+4. 源内OSS の Web の ExApp 登録に endpoint / apiKey / リクエスト形式 JSON を入れる。
 
 ---
 
@@ -58,21 +59,21 @@ docker run --rm -p 8000:8000 \
 
 ---
 
-## genai-web に ExApp 登録する（本番＝クラウド版）
+## 源内OSS の Web に ExApp 登録する（本番＝クラウド版）
 
-これが本番の載せ方です。公開した gwr を、genai-webの
-ExApp として登録します。gwr 本体は源内と同居する必要はなく、**genai-web から到達できる
+これが本番の載せ方です。公開した gwr を、源内OSS の Web に
+ExApp として登録します。gwr 本体は源内OSS と同居する必要はなく、**源内OSS の Web から到達できる
 公開 HTTPS** のどこに置いても構いません。
 
 ### 1. 公開して保護する
 
 - gwr を公開 HTTPS で配置する（任意のホスト/クラウド）。前段に TLS 終端（リバース
   プロキシ等）を置き、`/invoke` を HTTPS で公開します。
-- `GWR_API_KEY` を**必ず**設定する。genai-web からの呼び出しはこの `x-api-key` で検証されます。
+- `GWR_API_KEY` を**必ず**設定する。源内OSS の Web からの呼び出しはこの `x-api-key` で検証されます。
 
 ### 2. 委譲先（LLM/RAG/CI）の認証を設定する（使うフローのみ）
 
-本番では委譲先は源内に登録済みの ExApp（公開 HTTPS）で、認証は **`x-api-key`** です。
+本番では委譲先は源内OSS に登録済みの ExApp（公開 HTTPS）で、認証は **`x-api-key`** です。
 
 ```bash
 GWR_LLM_ENDPOINT=https://.../llm   GWR_LLM_API_KEY=...
@@ -91,9 +92,9 @@ uv run gwr ui-spec <flow>.toml
 
 `[[inputs]]` から入力フォーム定義（リクエスト形式 JSON）が生成されます。
 
-### 4. genai-web に登録する
+### 4. 源内OSS の Web に登録する
 
-genai-web のチーム管理 → ExApp 登録に次を入力します。
+源内OSS の Web のチーム管理 → ExApp 登録に次を入力します。
 
 | 項目 | 値 |
 |---|---|
@@ -101,12 +102,12 @@ genai-web のチーム管理 → ExApp 登録に次を入力します。
 | apiKey | `GWR_API_KEY` に設定した値。 |
 | リクエスト形式 JSON | `uv run gwr ui-spec <flow>.toml` の出力。 |
 
-これでgenai-web の WebUI から、`[[inputs]]` 由来の入力フォームでフローを実行でき、
+これで源内OSS の Web の WebUI から、`[[inputs]]` 由来の入力フォームでフローを実行でき、
 結果が `[[outputs]]`（テキスト＋ファイル）として表示されます。`[[inputs]]` に
-ファイル型があれば、源内が `inputs.files[]` 形でアップロードを渡します。
+ファイル型があれば、源内OSS が `inputs.files[]` 形でアップロードを渡します。
 
-> 認証・利用者管理・データ保持・課金はgenai-web の責務です。gwr は endpoint の公開と
-> apiKey 検証だけを担い、源内のソースには一切依存しません（API 仕様準拠の独立実装）。
+> 認証・利用者管理・データ保持は源内OSS の Web の責務です。gwr は endpoint の公開と
+> apiKey 検証だけを担い、源内OSS のソースには一切依存しません（API 仕様準拠の独立実装）。
 
 ### チェックリスト（本番）
 
@@ -159,7 +160,7 @@ GWR_API_KEY=<任意> docker compose -f deploy/gwr-onpre.compose.yml up -d --buil
 - RAG「該当なし」マーカーを有効化するなら `GWR_RAG_NO_RESULT_MARKERS_FILE` を指定
   （既定の同梱ファイルは全行コメントアウト＝無効。有効化は `#` を外して再ビルドか別ファイルをマウント）。
 
-### genai-web（オンプレ版）への登録
+### 源内OSS の Web（オンプレ版）への登録
 
 登録項目は本番と同じ（endpoint=`http://gwr:8000/invoke`、apiKey=`GWR_API_KEY`、
 リクエスト形式 JSON=`gwr ui-spec` の出力）。オンプレ版固有の確認事項：

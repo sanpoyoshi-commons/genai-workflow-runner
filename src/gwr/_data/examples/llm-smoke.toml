@@ -1,0 +1,26 @@
+version = "1"
+
+# =====================================================================
+# LLM 実機スモーク用の最小フロー：質問 → LLM → 回答
+# 委譲先（onpre の ollama = OpenAI 互換）を実叩きして 1 往復を確認する。
+# =====================================================================
+
+[[inputs]]
+key = "question"
+type = "textarea"
+label = "質問"
+required = true
+
+# LLM に質問を渡して回答を得る（model/system は config 由来＝GWR_LLM_* で注入）
+[[steps]]
+id = "ask"
+type = "llm"
+config_type = "answer"
+in = { question = "$.vars.question" }
+out = "vars.answer"
+
+[[outputs]]
+key = "answer"
+from = "$.vars.answer"
+type = "text"
+label = "回答"

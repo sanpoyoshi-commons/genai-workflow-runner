@@ -105,7 +105,9 @@ def test_foreach_limit_exceeded_fails_closed():
     r = Runner(make_test_registry(), max_foreach_items=2)
     with pytest.raises(RunnerError) as ei:
         r.run(_foreach_steps(), Envelope())
-    assert "FOREACH_LIMIT_EXCEEDED" in ei.value.reason
+    # reason は理由コードのみ。詳細は detail へ分ける（tests/test_user_messages.py が固定）。
+    assert ei.value.reason == "FOREACH_LIMIT_EXCEEDED"
+    assert ei.value.detail == "3 > 2"
 
 
 def test_foreach_within_limit_ok():

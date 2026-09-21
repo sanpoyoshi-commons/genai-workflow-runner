@@ -57,7 +57,7 @@ class FileLoadNode(Node):
     ) -> dict[str, Any]:
         file_ref = inputs.get("file")
         if not isinstance(file_ref, dict) or "contents" not in file_ref:
-            raise NodeError("FILE_MISSING", "入力 file が inline FileRef ではない")
+            raise NodeError("FILE_MISSING", "input=file expected=FileRef")
         try:
             raw = base64.b64decode(file_ref["contents"], validate=True)
         except (binascii.Error, ValueError) as e:

@@ -1,7 +1,7 @@
-"""code_interpreter ノード ＋ 源内 Code Interpreter API アダプタ契約。
+"""code_interpreter ノード ＋ 源内OSS の Code Interpreter API アダプタ契約。
 
 instruction と入力ファイル（FileRef[]）を委譲し、生成された artifacts（FileRef[]）を
-回収する。実行環境（サンドボックス）は源内/クラウド側。本基盤はサンドボックスを持たない。
+回収する。実行環境（サンドボックス）は源内OSS／クラウド側。本基盤はサンドボックスを持たない。
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from gwr.adapters.delegate_errors import delegate_errors
 from gwr.datatypes import FileRef
 from gwr.nodes.base import Node, NodeContext, NodeError, NodeSignature
 
@@ -43,15 +44,16 @@ class CodeInterpreterNode(Node):
     ) -> dict[str, Any]:
         adapter: CodeInterpreterAdapter | None = ctx.adapters.get("code_interpreter")
         if adapter is None:
-            raise NodeError("ADAPTER_MISSING", "code_interpreter アダプタ未注入")
+            raise NodeError("ADAPTER_MISSING", "adapter=code_interpreter")
         instruction = config.get("instruction")
         if not isinstance(instruction, str) or not instruction:
-            raise NodeError("INSTRUCTION_MISSING", "instruction が未指定")
+            raise NodeError("INSTRUCTION_MISSING", "param=instruction")
         files = inputs.get("files", [])
         if isinstance(files, dict):  # 単一 FileRef を許容
             files = [files]
         req = CodeInterpreterRequest(instruction=instruction, files=list(files))
-        resp = adapter.run(req)
+        with delegate_errors():
+            resp = adapter.run(req)
         if resp.usage:
             ctx.add_usage(resp.usage)
         return {"artifacts": list(resp.artifacts), "output": resp.output}

@@ -1,0 +1,82 @@
+version = "1"
+
+# =====================================================================
+# フロー TOML 生成器：やりたいこと → LLM が TOML を生成 → その場で検証 → 分岐
+#   generate(llm) → check(flow.validate) → gate(分岐)
+#     ok → write(file.write format="text") で .toml を artifacts に載せる
+#     ng → そのまま終了し、検証レポート（issues）で直し方を示す
+# gwr 自身のフローとして書いてあるので、源内OSS の Web 互換の実行環境ならどこでも動く。
+#
+# 仕様 1 枚（`gwr spec` の出力）は spec 入力から渡す。リポジトリ内に二重に持たないため。
+#   uv run gwr run examples/toml-generator.toml \
+#     --set request="Excelを部署別に集計して要約する" \
+#     --set spec="$(uv run gwr spec)" \
+#     --llm-fake "$(cat examples/hello.toml)"
+# 実 LLM で動かすときは --llm-fake を外し GWR_LLM_ENDPOINT を設定する。
+# =====================================================================
+
+[[inputs]]
+key = "request"                     # 束縛先スロット → vars.request
+type = "textarea"
+label = "作りたいワークフロー"
+required = true
+desc = "例：Excel を部署別に集計して、要約を付けてレポートを返す"
+max_length = 2000
+
+[[inputs]]
+key = "spec"                        # フロー TOML 仕様 1 枚（`gwr spec` の出力）
+type = "textarea"
+label = "フロー TOML 仕様"
+required = true
+desc = "生成の材料になる仕様。運用側が固定値で流し込む"
+
+# 仕様と要望を渡して TOML を書かせる（推論の実体は委譲先）
+[[steps]]
+id = "generate"
+type = "llm"
+config_type = "toml_generation"
+in = { spec = "$.vars.spec", request = "$.vars.request" }
+out = "vars.toml"
+
+# 生成物をその場で検証する（外部に出ないローカル処理）
+[[steps]]
+id = "check"
+type = "flow.validate"
+in = { flow_toml = "$.vars.toml" }
+out = "vars.report"
+
+# 検証を通ったかで分岐
+[[steps]]
+id = "gate"
+type = "branch"
+when = "$.vars.report.ok"
+then = "write"                      # 通った → ファイルにして返す
+else = "__end__"                    # 通らなかった → report 出力だけで終了
+
+# 通ったフローを .toml ファイルとして artifacts に載せる
+[[steps]]
+id = "write"
+type = "file.write"
+format = "text"
+name = "flow.toml"
+in = { text = "$.vars.toml" }
+out = "files.flow"
+next = "__end__"
+
+[[outputs]]
+key = "toml"
+from = "$.vars.toml"
+type = "text"
+label = "生成されたフロー TOML"
+
+[[outputs]]
+key = "report"
+from = "$.vars.report"
+type = "text"
+label = "検証レポート（ok が false なら issues を見て直す）"
+
+[[outputs]]
+key = "flow"
+from = "$.files.flow"
+type = "file"
+label = "flow.toml"

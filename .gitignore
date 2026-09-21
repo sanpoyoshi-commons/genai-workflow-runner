@@ -10,7 +10,7 @@ dist/
 .venv/
 venv/
 
-# 環境変数・秘密（源内endpoint/APIキーは必ず環境変数化）
+# 環境変数・秘密（源内OSS の endpoint/APIキーは必ず環境変数化）
 .env
 .env.*
 *.key

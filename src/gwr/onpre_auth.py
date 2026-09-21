@@ -1,6 +1,6 @@
 """オンプレ版専用の認証足場：Keycloak password grant でアクセストークンを取得する。
 
-**位置づけ（重要）**：クラウド版（cloud）のgenai-web の委譲先（LLM/RAG/CI）は、源内に
+**位置づけ（重要）**：源内OSS クラウド版の Web の委譲先（LLM/RAG/CI）は、源内OSS に
 登録済みの ExApp 公開エンドポイント＋`x-api-key` 認証で叩く（封筒クライアントの本番経路）。
 本モジュールは不要。オンプレ版は同じ封筒ルートを中央 `api` に集約し **Keycloak Bearer** で
 ゲートしているため、**実機テスト（smoke / tests/real）でのみ**ここでトークンを取得し
@@ -51,14 +51,22 @@ def fetch_keycloak_token_info(
         data=body,
     )
     if resp.status >= 400:
-        raise TransportError("KEYCLOAK_TOKEN_ERROR", f"status={resp.status} {resp.body_text[:200]}")
+        raise TransportError(
+            "KEYCLOAK_TOKEN_ERROR",
+            f"status={resp.status} body={resp.body_text[:200]}",
+            status=resp.status,
+        )
     try:
         payload = resp.json()
     except ValueError as e:
-        raise TransportError("KEYCLOAK_TOKEN_BAD_JSON", resp.body_text[:200]) from e
+        raise TransportError(
+            "KEYCLOAK_TOKEN_BAD_JSON", f"body={resp.body_text[:200]}", status=resp.status
+        ) from e
     token = payload.get("access_token") if isinstance(payload, dict) else None
     if not isinstance(token, str) or not token:
-        raise TransportError("KEYCLOAK_TOKEN_MISSING", resp.body_text[:200])
+        raise TransportError(
+            "KEYCLOAK_TOKEN_MISSING", f"body={resp.body_text[:200]}", status=resp.status
+        )
     raw_ttl = payload.get("expires_in")
     ttl = float(raw_ttl) if isinstance(raw_ttl, (int, float)) and raw_ttl > 0 else 60.0
     return token, ttl

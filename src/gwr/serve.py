@@ -1,6 +1,6 @@
-"""serve — /invoke を出す HTTP 層（源内プロトコル準拠の AI アプリ化）。
+"""serve — /invoke を出す HTTP 層（源内OSS の Web プロトコル準拠の AI アプリ化）。
 
-genai-web が `{inputs}` を POST し、本サービスが `{outputs, artifacts}` を返す。
+源内OSS の Web が `{inputs}` を POST し、本サービスが `{outputs, artifacts}` を返す。
 起動時に全フローを検証し、不正なら fail-closed で起動を拒否する。
 
 FastAPI は任意依存（`pip install gwr[serve]`）。本モジュールは import 時に FastAPI を要求する。
@@ -21,7 +21,7 @@ def create_app(
 ) -> Any:
     """WorkflowApp を /invoke エンドポイントとして公開する FastAPI アプリを返す。
 
-    api_key を渡すと、genai-web の ExApp 呼び出しと同じ `x-api-key` ヘッダを検証する
+    api_key を渡すと、源内OSS の Web の ExApp 呼び出しと同じ `x-api-key` ヘッダを検証する
     （一致しなければ 401）。None なら認証なし（ローカル確認用）。
     """
     from fastapi import FastAPI, Header, HTTPException  # 遅延 import（任意依存）
@@ -33,7 +33,7 @@ def create_app(
             raise RuntimeError(f"フロー検証に失敗（起動拒否）: {report.issues}")
 
     class InvokeRequest(BaseModel):
-        """genai-web からの送出形式 {inputs: {...}}。"""
+        """源内OSS の Web からの送出形式 {inputs: {...}}。"""
 
         inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -45,7 +45,7 @@ def create_app(
 
     @api.get("/ui-spec")
     def ui_spec() -> dict[str, Any]:
-        """源内チーム管理に登録するリクエスト形式 JSON を返す。"""
+        """源内OSS のチーム管理に登録するリクエスト形式 JSON を返す。"""
         return workflow.ui_spec()
 
     @api.get("/healthz")

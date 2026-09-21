@@ -1,0 +1,46 @@
+# genai-workflow-runner
+
+> TOML で多段の AI 業務ワークフローを定義・実行する汎用ランナー（コマンド名 `gwr`）。
+> ガバメントAI 源内 OSS（`digital-go-jp/genai-web` / `digital-go-jp/genai-ai-api`）の
+> Web プロトコルに準拠した AI アプリとして接続できます。1 つの TOML ファイルで多段の AI
+> ワークフローを宣言し、ノード（部品）とレシピ（TOML）として記述します。Python 3.12+ /
+> Apache-2.0。独立・非公式のプロジェクトで、デジタル庁とは関係がありません。
+
+フローは `version` / `[[inputs]]` / `[[steps]]` / `[[outputs]]` の 4 要素で書きます。ステップは
+フラットなリストで、`id` 参照のジャンプ（`next` / `branch` の `then` `else`）で制御します。
+ステップ間のデータは Envelope のスロット（`files.*` / `tables.*` / `vars.*`）を介して渡し、
+読みは `$.` 付きの JMESPath、`branch` の条件は CEL で書きます。
+
+ノードは 7 種（`file.load` / `file.transform` / `file.write` / `flow.validate` / `llm` /
+`retrieval` / `code_interpreter`）＋制御 2 種（`branch` / `foreach`）。`file.*` と
+`flow.validate` はローカル処理、残りの 3 種は源内OSS の API への委譲アダプタで、gwr 自身は
+外部アクセスノードを持ちません。
+
+実行は完全ステートレス・fail-fast。書いたフローは `gwr validate` で構文・データフロー・
+型伝播を実行前に検証できます（`--json` で機械可読出力）。`gwr mcp` で同じ検証を MCP
+サーバ（stdio）のツールとして公開できます。
+
+## フロー TOML を書く
+
+- [フロー TOML 仕様（生成タスク特化の凝縮版）](docs/flow-toml-for-ai.md): 1 ファイルで完結する凝縮版。ノード表・`ops` 一覧・CEL 許可関数・理由コードと直し方・検証手順。
+- [フロー TOML の書き方](docs/flow-toml.md): `[[inputs]]` / `[[steps]]` / `[[outputs]]`、Envelope とスロット、`branch` / `foreach`、`on_error`。
+- [ノードリファレンス](docs/nodes.md): ノード 7 種の入出力・パラメータ・型シグネチャ。
+- [式（参照と条件）](docs/expressions.md): `$.` 参照（JMESPath）と `when`（CEL）の文法・制限。
+
+## 使う
+
+- [CLI リファレンス](docs/cli.md): `validate`（`--json` と理由コード一覧）/ `spec` / `ui-spec` / `mcp`（MCP サーバ・ツール 4 本と Resources）/ `run` / `serve` / `smoke-llm` / `smoke-rag` / `smoke-ci`。
+- [委譲先への接続と環境変数](docs/delegates.md): LLM / RAG / CI の `GWR_*` 一覧と RAG の「該当なし」判定。
+- [デプロイと ExApp 登録](docs/deploy.md): `gwr serve` / Docker での公開と源内OSS の Web への登録手順。
+- [ドキュメント目次](docs/README.md): 読む順の案内。
+
+## リポジトリ
+
+- [README](README.md): 概要・クイックスタート・ノード一覧。
+- [AGENTS.md](AGENTS.md): AI エージェント向けの手順（セットアップ・テスト・禁止事項）。
+- [SECURITY.md](SECURITY.md): 脆弱性の報告先と対応方針。
+- [DISCLAIMER.md](DISCLAIMER.md): 無保証と、上流プロジェクトとの関係（非提携）。
+
+## Optional
+
+- [前提環境のセットアップ](docs/prerequisites.md): Windows 11 での WSL2 + Ubuntu 準備。

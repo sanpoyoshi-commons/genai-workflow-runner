@@ -5,7 +5,7 @@ config_type（例: "answer_generation"）ごとに、以下の優先順で deep-
     defaults["default"]  <  defaults[type]  <  app["default"]  <  app[type]
 
 app 側が default 側を上書きし、欠損キーは下位レイヤへフォールバックする。
-源内 LLM アダプタが model_id / system_prompt / inference_config を引くための窓口。
+源内OSS の LLM アダプタが model_id / system_prompt / inference_config を引くための窓口。
 """
 
 from __future__ import annotations

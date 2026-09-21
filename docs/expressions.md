@@ -86,7 +86,8 @@ when = "$.vars.name.startsWith(\"A\")"         # 前方一致
 | 未許可関数 | — | `禁止された関数呼び出し` |
 | bool 以外を返す | — | `条件式が bool を返さない` |
 
-これらはいずれも実行を止める（`ExprError` → `BRANCH_EVAL_FAILED`）方向に倒れます。
+これらはいずれも実行を止めます（`ExprError` → `error.reason = "BRANCH_EVAL_FAILED"`。
+どの制限に触れたかは例外メッセージ側に入り、応答には載りません）。
 `when` は `validate` 時にコンパイル検証され、コンパイルできなければ
 `BRANCH_WHEN_UNCOMPILABLE` として実行前に検出されます。
 

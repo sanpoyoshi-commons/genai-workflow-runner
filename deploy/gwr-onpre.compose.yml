@@ -12,7 +12,7 @@
 #
 # 起動：
 #   GWR_API_KEY=<任意> docker compose -f deploy/gwr-onpre.compose.yml up -d --build
-# genai-web の ExApp 登録：endpoint=http://gwr:8000/invoke、apiKey=<GWR_API_KEY>、
+# 源内OSS の Web の ExApp 登録：endpoint=http://gwr:8000/invoke、apiKey=<GWR_API_KEY>、
 #   リクエスト形式 JSON=`uv run gwr ui-spec examples/poc.toml` の出力。
 
 services:
@@ -41,7 +41,7 @@ services:
       #   GWR_CI_ENDPOINT=https://api:3443/api/code-interpreter/responses
       #   GWR_KC_TOKEN_URL=http://keycloak:8080/realms/genai-realm/protocol/openid-connect/token
       #   GWR_KC_USER=<user> GWR_KC_PASS=<pass>  GWR_VERIFY_TLS=false
-      # 本番（オリジナル源内）は委譲先 ExApp の x-api-key（GWR_RAG_API_KEY/GWR_CI_API_KEY）。
+      # 本番（源内OSS クラウド版）は委譲先 ExApp の x-api-key（GWR_RAG_API_KEY/GWR_CI_API_KEY）。
       GWR_RAG_ENDPOINT: ${GWR_RAG_ENDPOINT:-}
       GWR_RAG_API_KEY: ${GWR_RAG_API_KEY:-}
       GWR_CI_ENDPOINT: ${GWR_CI_ENDPOINT:-}
@@ -54,7 +54,7 @@ services:
       GWR_ALLOW_INSECURE: ${GWR_ALLOW_INSECURE:-}
       # 委譲先タイムアウト（秒）。law-rag/CI は CPU で数分かかるため既定 600。
       GWR_TIMEOUT: ${GWR_TIMEOUT:-}
-      # RAG「該当なし」マーカー。源内 RAG は no-match でも非空の文章を返すため、その文を
+      # RAG「該当なし」マーカー。源内OSS の RAG は no-match でも非空の文章を返すため、その文を
       # 注入すると docs=[]（該当なし分岐）になる。FILE=/app/examples/rag-no-result-markers.example.txt
       # （既定は全行コメントアウト＝無効。有効化するなら # を外して再ビルド、または別ファイルをマウント）。
       GWR_RAG_NO_RESULT_MARKERS: ${GWR_RAG_NO_RESULT_MARKERS:-}

@@ -16,14 +16,24 @@ from pathlib import Path
 from typing import Any
 
 from gwr.adapters.fakes import FakeLLMAdapter
+from gwr.adapters.transport import TransportError
 from gwr.app import WorkflowApp
-from gwr.validate import validate_file
+from gwr.validate import report_to_dict, validate_file, validate_file_safe
 
 # run で LLM config_type が解決できるよう、どんな型でも model_id を返す最小既定。
 _DEFAULT_CONFIG = '[default]\nmodel_id = "local"\n'
 
 
+def _cmd_validate_json(args: argparse.Namespace) -> int:
+    """--json: 機械可読レポートを出す。終了コードは整形出力と同じ 0 / 1。"""
+    report = validate_file_safe(args.flow)
+    print(json.dumps(report_to_dict(report), ensure_ascii=False, indent=2))
+    return 0 if report.ok else 1
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
+    if args.json:
+        return _cmd_validate_json(args)
     report = validate_file(args.flow)
     if report.ok:
         print("OK: フロー検証に問題なし")
@@ -31,6 +41,14 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     for issue in report.issues:
         print(f"[{issue.category}] {issue.step_id}: {issue.reason} {issue.detail}".rstrip())
     return 1
+
+
+def _cmd_spec(args: argparse.Namespace) -> int:
+    """同梱のフロー TOML 仕様 1 枚を標準出力へ出す（MCP の gwr_spec と同じ中身）。"""
+    from gwr.assets import spec_markdown
+
+    print(spec_markdown(), end="")
+    return 0
 
 
 def _cmd_ui_spec(args: argparse.Namespace) -> int:
@@ -50,7 +68,7 @@ def _parse_kv(pairs: list[str], what: str) -> dict[str, str]:
 
 
 def _build_request_inputs(sets: dict[str, str], files: dict[str, str]) -> dict[str, Any]:
-    """--set/--file から源内リクエストの inputs を組み立てる（ファイルは同期/UI 生成形）。"""
+    """--set/--file から源内OSS のリクエストの inputs を組み立てる（ファイルは同期/UI 生成形）。"""
     inputs: dict[str, Any] = dict(sets)
     for key, path in files.items():
         raw = Path(path).read_bytes()
@@ -117,7 +135,9 @@ def _llm_setup(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
 def _delegate_extra_headers(
     transport: Any,
 ) -> dict[str, str] | Callable[[], dict[str, str]] | None:
-    """委譲先の認証ヘッダ。GWR_KC_USER があればオンプレ版 Keycloak Bearer のプロバイダ、無ければ None。
+    """委譲先の認証ヘッダ。
+
+    GWR_KC_USER があればオンプレ版 Keycloak Bearer のプロバイダ、無ければ None。
 
     常駐 serve 向けに **invoke 毎に失効再取得する** KeycloakTokenProvider（callable）を返す。
     起動時 1 回固定だと access_token が数分で失効し、時間経過後の委譲呼びが 401 になるため。
@@ -143,7 +163,7 @@ def _load_no_result_markers(
 ) -> list[str]:
     """RAG「該当なし」マーカー文を読み込む（運用注入・gwr 本体に焼かない）。
 
-    源内 RAG は no-match でも非空の「該当なし」文を返すため、運用者がその文を注入して
+    源内OSS の RAG は no-match でも非空の「該当なし」文を返すため、運用者がその文を注入して
     `docs=[]`（該当なし分岐）へ落とす。優先順は引数 > 環境変数。
     - file（`GWR_RAG_NO_RESULT_MARKERS_FILE`）：1 行 1 マーカー。`#` 始まり・空行は無視
       （＝既定でコメントアウトしておけば無効。運用者が外して有効化）。長い日本語向き。
@@ -229,7 +249,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    """/invoke を HTTP 公開する（genai-web に ExApp 登録して WebUI から確認する用）。
+    """/invoke を HTTP 公開する（源内OSS の Web に ExApp 登録して WebUI から確認する用）。
 
     認証キーは環境変数 GWR_API_KEY（設定時のみ x-api-key を検証）。
     LLM は GWR_LLM_ENDPOINT があれば実 LLM、無ければ Fake。
@@ -246,6 +266,25 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     )
     api = create_app(app, api_key=os.environ.get("GWR_API_KEY"))
     uvicorn.run(api, host=args.host, port=args.port)
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    """MCP サーバ（stdio）を起動する。
+
+    MCP SDK は optional extra（`gwr[mcp]`）のため import は関数内で行う。未導入でも
+    他のサブコマンドは動く。stdout は JSON-RPC 専用なので案内は stderr へ出す。
+    """
+    try:
+        from gwr.mcp_server import serve_stdio
+    except ImportError as e:
+        print(
+            f"gwr mcp には extra `gwr[mcp]` が必要です（不足: {e}）。"
+            "`uv sync --extra mcp` を実行してください。",
+            file=sys.stderr,
+        )
+        return 1
+    serve_stdio()
     return 0
 
 
@@ -384,9 +423,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_validate = sub.add_parser("validate", help="フロー TOML を検証する")
     p_validate.add_argument("flow", type=Path)
+    p_validate.add_argument("--json", action="store_true",
+                            help="検証結果を機械可読 JSON で出力する（終了コードは変わらない）")
     p_validate.set_defaults(func=_cmd_validate)
 
-    p_ui = sub.add_parser("ui-spec", help="源内リクエスト形式 JSON を出力する")
+    p_spec = sub.add_parser("spec", help="フロー TOML 仕様 1 枚（Markdown）を出力する")
+    p_spec.set_defaults(func=_cmd_spec)
+
+    p_ui = sub.add_parser("ui-spec", help="源内OSS のリクエスト形式 JSON を出力する")
     p_ui.add_argument("flow", type=Path)
     p_ui.set_defaults(func=_cmd_ui_spec)
 
@@ -404,13 +448,16 @@ def main(argv: list[str] | None = None) -> int:
                        help="LLM 設定 TOML（model_id/system_prompt 等）。省略時は最小既定")
     p_run.set_defaults(func=_cmd_run)
 
-    p_serve = sub.add_parser("serve", help="/invoke を HTTP 公開（genai-web から WebUI 確認）")
+    p_serve = sub.add_parser("serve", help="/invoke を HTTP 公開（源内OSS の Web から WebUI 確認）")
     p_serve.add_argument("flow", type=Path)
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--llm-fake", default="(LLMモック出力)", metavar="TEXT")
     p_serve.add_argument("--config", default=None, metavar="TOML")
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_mcp = sub.add_parser("mcp", help="MCP サーバを stdio で起動する（要 --extra mcp）")
+    p_mcp.set_defaults(func=_cmd_mcp)
 
     p_smoke = sub.add_parser("smoke-llm", help="委譲先 LLM を 1 回実叩き（実機スモーク）")
     p_smoke.add_argument("--endpoint", required=True,
@@ -451,7 +498,17 @@ def main(argv: list[str] | None = None) -> int:
     p_ci.set_defaults(func=_cmd_smoke_ci)
 
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except TransportError as e:
+        # 委譲先の接続先・資格情報の設定誤り。アダプタ生成（起動時）でも実行中でも起きる。
+        # ここは**運用者が見る面**なので、url・host・status を出す（出さないと直せない）。
+        print(f"委譲先に接続できません: {e}", file=sys.stderr)
+        print(
+            "  接続先と認証の環境変数（GWR_*_ENDPOINT / GWR_*_API_KEY）を確認してください。",
+            file=sys.stderr,
+        )
+        return 2
 
 
 if __name__ == "__main__":

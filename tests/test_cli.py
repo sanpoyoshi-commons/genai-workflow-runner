@@ -194,3 +194,68 @@ def test_smoke_ci_api_key_path(monkeypatch, capsys):
     assert "分析しました" in capsys.readouterr().out
     ci_req = [r for r in _ScriptedTransport.last.requests if "code-interpreter" in r["url"]][0]
     assert ci_req["headers"]["x-api-key"] == "K"
+
+
+def test_mcp_subcommand_is_listed_in_help(capsys):
+    """`gwr --help` に mcp が並ぶ（extra の有無に関係なくサブコマンドは存在する）。"""
+    import pytest
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--help"])
+    assert excinfo.value.code == 0
+    assert "mcp" in capsys.readouterr().out
+
+
+def test_mcp_subcommand_guides_when_extra_is_missing(monkeypatch, capsys):
+    """extra 未導入の環境では案内を stderr に出して 1 で終わる（他のコマンドは無影響）。"""
+    import builtins
+    import sys
+
+    real_import = builtins.__import__
+
+    def refuse_mcp(name, *args, **kwargs):
+        if name == "mcp" or name.startswith("mcp."):
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    for module in [m for m in list(sys.modules) if m == "mcp" or m.startswith("mcp.")]:
+        monkeypatch.delitem(sys.modules, module, raising=False)
+    monkeypatch.delitem(sys.modules, "gwr.mcp_server", raising=False)
+    monkeypatch.setattr(builtins, "__import__", refuse_mcp)
+
+    rc = main(["mcp"])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""  # stdout は JSON-RPC 専用なので汚さない
+    assert "--extra mcp" in captured.err
+    # 同じプロセスで他のサブコマンドは従来どおり動く
+    assert main(["validate", POC]) == 0
+
+
+def test_spec_outputs_the_bundled_one_pager(capsys):
+    """`gwr spec` は同梱の仕様 1 枚をそのまま出す（docs/ の原本と一致）。"""
+    from gwr.assets import spec_markdown
+
+    rc = main(["spec"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out == spec_markdown()
+    assert out == (Path(__file__).resolve().parents[1] / "docs" / "flow-toml-for-ai.md").read_text(
+        "utf-8"
+    )
+
+
+def test_startup_endpoint_error_is_one_line_not_a_traceback(monkeypatch, capsys):
+    """委譲先の接続先が不正なら、起動時に 1 行のメッセージで終わる（終了コード 2）。
+
+    ここは**運用者が見る面**なので、直せるように url / host を出す
+    （利用者が見る `error.reason` 側には出さない → tests/test_delegate_errors.py）。
+    """
+    monkeypatch.setenv("GWR_LLM_ENDPOINT", "http://10.0.0.5/v1/chat")
+    rc = main(["run", POC, "--set", "threshold=1"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert err.splitlines()[0].startswith("委譲先に接続できません: ENDPOINT_NOT_HTTPS")
+    assert "10.0.0.5" in err  # 運用者が直すために必要
+    assert "Traceback" not in err

@@ -1,4 +1,4 @@
-"""serve: /invoke が源内プロトコル準拠で {outputs, artifacts} を返す（mock LLM）。"""
+"""serve: /invoke が源内OSS の Web プロトコル準拠で {outputs, artifacts} を返す（mock LLM）。"""
 
 import base64
 import io

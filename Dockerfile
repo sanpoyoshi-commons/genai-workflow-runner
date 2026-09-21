@@ -1,4 +1,4 @@
-# gwr をgenai-web の ExApp として登録し WebUI から動作確認するためのコンテナ。
+# gwr を源内OSS の Web の ExApp として登録し WebUI から動作確認するためのコンテナ。
 # 委譲先（LLM/RAG/CI）は持ち込まず、Excel/CSV 加工は Fake LLM で同期実走する。
 FROM python:3.12-slim
 
@@ -19,7 +19,7 @@ EXPOSE 8000
 
 # 検証するフロー（既定は同梱の PoC）。上書きは GWR_FLOW で。
 ENV GWR_FLOW=/app/examples/poc.toml
-# 認証キー（源内 ExApp 登録時の apiKey と一致させる）。未設定なら認証なし。
+# 認証キー（源内OSS の ExApp 登録時の apiKey と一致させる）。未設定なら認証なし。
 # ENV GWR_API_KEY=...
 
 # /healthz（認証不要）への到達性で死活監視。curl 非依存（slim に curl 無し）＝stdlib のみで判定。

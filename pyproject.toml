@@ -1,7 +1,7 @@
 [project]
 name = "gwr"
 version = "0.1.0"
-description = "genai-webプロトコル準拠の汎用AIワークフローランナー（完全オリジナル・Apache-2.0）"
+description = "TOMLで多段のAI業務ワークフローを定義・実行する汎用ランナー（完全オリジナル・Apache-2.0）。ガバメントAI 源内 OSS の genai-web プロトコル準拠AIアプリとして接続可能"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "mcp==2.2.0",          # MIT — MCP サーバ（stdio）。`gwr mcp` のみで使う
+]
 serve = [
     "fastapi>=0.110",      # MIT — /invoke HTTP 層
     "uvicorn>=0.29",       # BSD-3

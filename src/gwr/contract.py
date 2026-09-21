@@ -1,10 +1,10 @@
 """contract — [[inputs]]／[[outputs]] 宣言の解釈。
 
 - parse_inputs / parse_outputs：TOML 宣言を構造化。
-- to_genai_ui_spec：入力契約から源内のリクエスト形式 JSON（8 コンポーネント）を生成。
-- bind_inputs：源内リクエストの inputs を検証して Envelope スロットへ束縛
+- to_genai_ui_spec：入力契約から源内OSS のリクエスト形式 JSON（8 コンポーネント）を生成。
+- bind_inputs：源内OSS のリクエストの inputs を検証して Envelope スロットへ束縛
   （file→files.<key>、scalar→vars.<key>）。
-- bind_outputs：Envelope を源内の {outputs(テキスト), artifacts(ファイル)} へ写像する
+- bind_outputs：Envelope を源内OSS の {outputs(テキスト), artifacts(ファイル)} へ写像する
   （利用者自身のデータなので値を含んでよい）。
 
 入力契約は「UI 生成・検証・Runner 束縛」の 3 用途を 1 宣言から導出する。
@@ -14,6 +14,7 @@ conversation_history は会話継続用の hidden 予約キー。
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,7 +28,7 @@ GENAI_COMPONENTS = frozenset(
 CHOICE_COMPONENTS = frozenset({"select", "checkbox", "radio"})
 CONVERSATION_HISTORY_KEY = "conversation_history"
 
-# 源内 UI JSON へ通すコンポーネント別の任意パラメータ。
+# 源内OSS の UI JSON へ通すコンポーネント別の任意パラメータ。
 _PASS_THROUGH = {
     "text": ("desc", "min_length", "max_length", "default_value"),
     "textarea": ("desc", "min_length", "max_length", "default_value"),
@@ -116,7 +117,7 @@ def parse_outputs(flow: dict[str, Any]) -> list[OutputSpec]:
 
 
 def to_genai_ui_spec(inputs: list[InputSpec]) -> dict[str, Any]:
-    """入力契約 → 源内リクエスト形式 JSON。"""
+    """入力契約 → 源内OSS のリクエスト形式 JSON。"""
     spec: dict[str, Any] = {}
     for inp in inputs:
         comp: dict[str, Any] = {"type": inp.type}
@@ -155,7 +156,7 @@ def _file_entry_to_ref(entry: dict[str, Any]) -> FileRef:
 
 
 def _to_file_refs(value: Any) -> list[FileRef]:
-    """源内のファイル送出形式を FileRef[] へ（受信は2系統を両対応）。
+    """源内OSS のファイル送出形式を FileRef[] へ（受信は2系統を両対応）。
 
     - 同期/UI生成形 : [{key, files:[{filename, content}]}]
     - 非同期curl例   : [{key, contents, filename}]
@@ -171,6 +172,23 @@ def _to_file_refs(value: Any) -> list[FileRef]:
         elif "filename" in group or "content" in group or "contents" in group:
             refs.append(_file_entry_to_ref(group))  # 平坦形（{key, contents, filename}）
     return refs
+
+
+# `required` が「空」とみなす文字。半角/全角スペース・タブ・改行のほか、見た目が空白の
+# Unicode 空白（NBSP 等）も含める。`str.strip()` は引数なしだと Unicode 空白を全て落とす
+# （全角スペース U+3000 も対象）ので、追加の定義は要らない。
+def _is_blank(value: Any) -> bool:
+    """`required = true` に対して「値が入っていない」とみなすか。
+
+    `[[inputs]]` はスキーマではなく UI 生成の宣言なので、利用者から見た `required` は
+    HTML5 の required（空欄不可）と意味を揃える。JSON Schema の required（キーの存在）
+    ではない。ブラウザ側の検証は `--set` や API 直叩きでは効かないため、ここで弾く。
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
 
 
 def _coerce_scalar(inp: InputSpec, value: Any) -> Any:
@@ -200,9 +218,9 @@ def _check_constraints(inp: InputSpec, value: Any) -> None:
 
 
 def _collect_file_refs(request_inputs: dict[str, Any], key: str) -> list[FileRef]:
-    """源内リクエストから当該 key のファイルを集める。
+    """源内OSS のリクエストから当該 key のファイルを集める。
 
-    源内本来の送出形は **`inputs.files[]` に全ファイルを集約**し各 entry の `key` で識別する：
+    源内OSS 本来の送出形は **`inputs.files[]` に全ファイルを集約**し各 entry の `key` で識別する：
         inputs.files = [{ "key": "<fieldKey>", "files": [{filename, content}] }]
     これを優先し、後方互換として `inputs.<key>` 直下（per-key 形）も受理する。
     """
@@ -222,7 +240,7 @@ def _collect_file_refs(request_inputs: dict[str, Any], key: str) -> list[FileRef
 def bind_inputs(
     inputs: list[InputSpec], request_inputs: dict[str, Any], envelope: Envelope
 ) -> Envelope:
-    """源内リクエストの inputs を検証して Envelope へ束縛。fail-closed。"""
+    """源内OSS のリクエストの inputs を検証して Envelope へ束縛。fail-closed。"""
     for inp in inputs:
         if inp.type == "file":
             refs = _collect_file_refs(request_inputs, inp.key)
@@ -233,7 +251,7 @@ def bind_inputs(
             multiple = bool(inp.params.get("multiple", False))
             envelope.set(f"files.{inp.key}", refs if multiple else refs[0])
             continue
-        # scalar 系（源内は inputs.<key> 直下で送る）
+        # scalar 系（源内OSS は inputs.<key> 直下で送る）
         if inp.key not in request_inputs:
             if inp.required:
                 raise ContractError("REQUIRED_MISSING", inp.key)
@@ -242,15 +260,33 @@ def bind_inputs(
                 # set は参照保存になったため、複数 Envelope が定義を共有しないよう明示コピーする。
                 envelope.set(f"vars.{inp.key}", copy.deepcopy(inp.params["default_value"]))
             continue
-        coerced = _coerce_scalar(inp, request_inputs[inp.key])
+        raw = request_inputs[inp.key]
+        if inp.required and _is_blank(raw):
+            # キーはあるが値が空。「無い」とは原因が違うので別コードで返す
+            # （利用者向け文言は app._USER_MESSAGES で分岐する）。
+            raise ContractError("REQUIRED_EMPTY", inp.key)
+        coerced = _coerce_scalar(inp, raw)
         _check_constraints(inp, coerced)
         envelope.set(f"vars.{inp.key}", coerced)
     return envelope
 
 
 # --- 出力写像 ------------------------------------------------------------
+def _render_text(value: Any) -> str:
+    """非ファイル出力を表示用テキストにする。
+
+    dict / list（flow.validate の検証レポート等）は Python の repr ではなく JSON にする。
+    文字列・数値など従来からある値の見え方は変えない（バイト不変）。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(value)
+
+
 def bind_outputs(outputs: list[OutputSpec], envelope: Envelope) -> dict[str, Any]:
-    """Envelope → 源内 {outputs(Markdown テキスト), artifacts(FileRef[])}。"""
+    """Envelope → 源内OSS の {outputs(Markdown テキスト), artifacts(FileRef[])}。"""
     text_parts: list[str] = []
     artifacts: list[dict[str, Any]] = []
     for out in outputs:
@@ -265,7 +301,7 @@ def bind_outputs(outputs: list[OutputSpec], envelope: Envelope) -> dict[str, Any
                     }
                 )
         else:
-            rendered = "" if value is None else str(value)
+            rendered = _render_text(value)
             if out.label:
                 text_parts.append(f"## {out.label}\n\n{rendered}")
             else:

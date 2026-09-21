@@ -1,4 +1,4 @@
-"""contract: inputs→源内UI JSON、conversation_history=hidden、outputs写像、検証。"""
+"""contract: inputs→源内OSS の UI JSON、conversation_history=hidden、outputs写像、検証。"""
 
 import pytest
 
@@ -67,7 +67,7 @@ def test_bind_inputs_scalar_file_and_required():
 
 
 def test_bind_inputs_real_genai_files_bucket_form():
-    # 源内本来の形：ファイルは inputs.files[] に集約され key で識別される
+    # 源内OSS 本来の形：ファイルは inputs.files[] に集約され key で識別される
     flow = {
         "inputs": [
             {"key": "question", "type": "text"},

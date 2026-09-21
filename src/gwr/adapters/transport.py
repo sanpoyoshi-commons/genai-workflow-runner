@@ -1,7 +1,7 @@
 """HTTP トランスポート抽象＋SSRF ガード。
 
 委譲先 API 接続の最下層。実装は注入式（テストはモックトランスポート）。
-委譲先 URL は公開 HTTPS のみ許可する（genai-web の assertPublicEndpointUrl 相当）。
+委譲先 URL は公開 HTTPS のみ許可する（源内OSS の Web の assertPublicEndpointUrl 相当）。
 """
 
 from __future__ import annotations
@@ -14,12 +14,19 @@ from urllib.parse import urlparse
 
 
 class TransportError(Exception):
-    """接続層の失敗（SSRF 拒否・ネットワーク失敗など）。reason はコード。"""
+    """接続層の失敗（SSRF 拒否・ネットワーク失敗など）。reason はコード。
 
-    def __init__(self, reason: str, detail: str = "") -> None:
+    detail は運用者が原因を特定するための情報（url / host / status 等）で、`key=value`
+    形式に揃える。**利用者への応答には出さない**（ノード層で NodeError に包み替える際に
+    捨てる → gwr.adapters.delegate_errors）。status は委譲先が HTTP 応答を返した場合の
+    ステータスコードで、包み替えの分類に使う。
+    """
+
+    def __init__(self, reason: str, detail: str = "", status: int | None = None) -> None:
         super().__init__(f"{reason}: {detail}" if detail else reason)
         self.reason = reason
         self.detail = detail
+        self.status = status
 
 
 def assert_public_https(url: str, allow_insecure: bool = False) -> None:
@@ -35,17 +42,17 @@ def assert_public_https(url: str, allow_insecure: bool = False) -> None:
     parsed = urlparse(url)
     if allow_insecure:
         if parsed.scheme not in ("http", "https"):
-            raise TransportError("ENDPOINT_BAD_SCHEME", url)
+            raise TransportError("ENDPOINT_BAD_SCHEME", f"url={url}")
         if not parsed.hostname:
-            raise TransportError("ENDPOINT_NO_HOST", url)
+            raise TransportError("ENDPOINT_NO_HOST", f"url={url}")
         return
     if parsed.scheme != "https":
-        raise TransportError("ENDPOINT_NOT_HTTPS", url)
+        raise TransportError("ENDPOINT_NOT_HTTPS", f"url={url}")
     host = parsed.hostname
     if not host:
-        raise TransportError("ENDPOINT_NO_HOST", url)
+        raise TransportError("ENDPOINT_NO_HOST", f"url={url}")
     if host.lower() == "localhost":
-        raise TransportError("ENDPOINT_NOT_PUBLIC", host)
+        raise TransportError("ENDPOINT_NOT_PUBLIC", f"host={host}")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
@@ -58,7 +65,7 @@ def assert_public_https(url: str, allow_insecure: bool = False) -> None:
         or ip.is_multicast
         or ip.is_unspecified
     ):
-        raise TransportError("ENDPOINT_NOT_PUBLIC", host)
+        raise TransportError("ENDPOINT_NOT_PUBLIC", f"host={host}")
 
 
 @dataclass
@@ -113,8 +120,10 @@ class HttpxTransport:
                 method, url, headers=headers, timeout=self.timeout,
                 verify=self.verify, **kwargs,
             )
-        except httpx.HTTPError as e:  # 接続/タイムアウト等
-            raise TransportError("HTTP_TRANSPORT_ERROR", str(e)) from e
+        except httpx.TimeoutException as e:  # 接続/読み取りのタイムアウト
+            raise TransportError("HTTP_TIMEOUT", f"error={e!s}") from e
+        except httpx.HTTPError as e:  # 接続失敗・プロトコル違反等
+            raise TransportError("HTTP_TRANSPORT_ERROR", f"error={e!s}") from e
         return HttpResponse(
             status=resp.status_code,
             body_text=resp.text,

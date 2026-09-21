@@ -131,7 +131,8 @@ def test_extra_headers_carry_into_async_polling():
 
 
 def test_extra_headers_callable_resolved_per_invoke():
-    """extra_headers が callable のとき invoke 毎に解決される（オンプレ版 の失効再取得トークン用）。"""
+    """extra_headers が callable のとき invoke 毎に解決される
+    （オンプレ版 の失効再取得トークン用）。"""
     calls = {"n": 0}
 
     def provider():

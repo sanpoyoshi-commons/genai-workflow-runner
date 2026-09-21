@@ -48,3 +48,63 @@ def validate_text(text: str, registry: dict[str, Any] | None = None) -> Validati
 
 def validate_file(path: str | Path, registry: dict[str, Any] | None = None) -> ValidationReport:
     return validate_text(Path(path).read_text("utf-8"), registry)
+
+
+# --- 機械可読レポート ----------------------------------------------------
+# `gwr validate --json` の出力スキーマ版。既存の reason コードはこの版の間は
+# 改名・削除しない（追加のみ）。破壊的変更を要する場合はこの数値を上げる。
+SCHEMA_VERSION = 1
+
+
+def validate_text_safe(text: str, registry: dict[str, Any] | None = None) -> ValidationReport:
+    """`validate_text` と同じだが、TOML パース失敗もレポートとして返す。
+
+    フロー TOML を「本文の文字列」で受ける経路（MCP ツール）用。パス受けの
+    `validate_file_safe` と同じ形の結果になる（`report_to_dict` に渡せる）。
+    `FILE_UNREADABLE` はファイルに触らないため構造的に発生しない。
+    理由コードは report.add の引数にリテラルで書く（docs/cli.md との突合テストが
+    AST で全数を拾えるように。tests/test_reason_codes.py）。
+    """
+    report = ValidationReport()
+    try:
+        return validate_text(text, registry)
+    except tomllib.TOMLDecodeError as e:
+        report.add("static", "", "TOML_PARSE_ERROR", str(e))
+        return report
+
+
+def validate_file_safe(
+    path: str | Path, registry: dict[str, Any] | None = None
+) -> ValidationReport:
+    """`validate_file` と同じだが、読み取り/パース失敗もレポートとして返す。
+
+    機械可読出力では例外を投げずに常に構造化結果を返す必要があるため。
+    読み取れた後の判定は `validate_text_safe` と同一（経路を1本にして差を作らない）。
+    """
+    report = ValidationReport()
+    try:
+        text = Path(path).read_text("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        report.add("static", "", "FILE_UNREADABLE", str(e))
+        return report
+    return validate_text_safe(text, registry)
+
+
+def report_to_dict(report: ValidationReport) -> dict[str, Any]:
+    """レポートを JSON 化可能な dict にする（`--json` と後続 MCP の共通形）。
+
+    `step_id` は「特定できる step が無い」場合に null。空文字は出さない。
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ok": report.ok,
+        "issues": [
+            {
+                "category": issue.category,
+                "step_id": issue.step_id or None,
+                "reason": issue.reason,
+                "detail": issue.detail,
+            }
+            for issue in report.issues
+        ],
+    }

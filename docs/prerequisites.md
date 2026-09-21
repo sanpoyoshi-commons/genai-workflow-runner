@@ -6,7 +6,7 @@ Docker も常駐サービスも要りません。本書は、その土台（OS �
 
 - Windows 11 → WSL2 → Ubuntu → 更新 / セキュリティ → **uv**
 - gwr を ExApp として公開したり オンプレ版スタックで実機テストする場合だけ、追加で **Docker** が
-  要ります（→ [Docker（任意）](#docker-任意exapp-公開オンプレ版-テスト時)）。
+  要ります（→ [Docker（任意）](#docker任意exapp-公開オンプレ版-テスト時)）。
 
 動作環境は **Linux（WSL2 / ネイティブ）** が基本です。macOS でも uv は動きます。最も手軽なのは
 **Windows 11 + WSL2 (Ubuntu) / x86_64** と **ネイティブ Linux / x86_64** です。

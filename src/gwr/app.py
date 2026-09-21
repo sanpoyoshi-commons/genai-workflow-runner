@@ -1,10 +1,10 @@
 """app — フロー 1 本を入力契約から出力写像まで通す実行アプリ。
 
-invoke()：源内リクエストの inputs を受け、bind_inputs → Runner.run → bind_outputs を行い
-源内レスポンス {outputs, artifacts} を返す。未捕捉エラーは利用者向けメッセージ（座標＋理由）と
+invoke()：源内OSS のリクエストの inputs を受け、bind_inputs → Runner.run → bind_outputs を行い
+源内OSS のレスポンス {outputs, artifacts} を返す。未捕捉エラーは利用者向けメッセージ（座標＋理由）と
 error フィールドへ写像する（値は出さない）。
 
-外部 I/O は持たない。LLM/検索/CI はアダプタ注入（本番＝源内／テスト＝Fake）。
+外部 I/O は持たない。LLM/検索/CI はアダプタ注入（本番＝源内OSS／テスト＝Fake）。
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from gwr.validate import validate_flow
 # 理由コード → 利用者向けメッセージ。値はエコーせず座標で特定させる。
 _USER_MESSAGES = {
     "REQUIRED_MISSING": "必須の入力が不足しています。",
+    "REQUIRED_EMPTY": "必須の入力が空です。",
     "NOT_NUMERIC": "数値であるべき項目が数値ではありません。",
     "BELOW_MIN": "入力値が下限を下回っています。",
     "ABOVE_MAX": "入力値が上限を超えています。",
@@ -40,6 +41,20 @@ _USER_MESSAGES = {
     "ROW_LIMIT_EXCEEDED": "ファイルの行数が上限を超えています。",
     "FILE_PARSE_ERROR": "ファイルを読み込めませんでした。",
     "FILE_DECODE_ERROR": "ファイルを読み込めませんでした。",
+    # 委譲先（LLM / RAG / Code Interpreter）の失敗。利用者が取る行動で 4 つに分けている
+    # （再実行で直るのか、管理者へ連絡すべきか）。設定値そのものは文言に出さない。
+    "DELEGATE_ENDPOINT_INVALID": (
+        "外部サービスの接続先設定に問題があります。管理者に連絡してください。"
+    ),
+    "DELEGATE_AUTH_FAILED": "外部サービスの認証に失敗しました。管理者に連絡してください。",
+    "DELEGATE_TIMEOUT": (
+        "外部サービスが混み合っているか、応答が時間内に返りませんでした。"
+        "時間をおいて再実行してください。"
+    ),
+    "DELEGATE_FAILED": (
+        "外部サービスの呼び出しに失敗しました。時間をおいて再実行し、"
+        "続く場合は管理者に連絡してください。"
+    ),
 }
 
 
@@ -91,14 +106,14 @@ class WorkflowApp:
         return cls.from_toml(Path(path).read_text("utf-8"), **kwargs)
 
     def ui_spec(self) -> dict[str, Any]:
-        """源内リクエスト形式 JSON を生成する。"""
+        """源内OSS のリクエスト形式 JSON を生成する。"""
         return to_genai_ui_spec(self.inputs)
 
     def validate(self) -> ValidationReport:
         return validate_flow(self.flow, self.runner.registry)
 
     def invoke(self, request_inputs: dict[str, Any]) -> dict[str, Any]:
-        """源内リクエスト inputs → 源内レスポンス {outputs, artifacts}。"""
+        """源内OSS のリクエスト inputs → 源内OSS のレスポンス {outputs, artifacts}。"""
         env = Envelope()
         ctx = NodeContext(config=self.config_factory, adapters=self.adapters, emit=self.emit)
         try:

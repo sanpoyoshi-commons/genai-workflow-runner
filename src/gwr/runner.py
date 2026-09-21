@@ -26,6 +26,7 @@ from gwr import expr
 from gwr.datatypes import TypeLevel
 from gwr.envelope import Envelope
 from gwr.nodes.base import DataError, Node, NodeContext, NodeError
+from gwr.nodes.file_write import writes_unsanitized_spreadsheet
 
 CONTROL_TYPES = frozenset({"branch", "foreach"})
 
@@ -38,18 +39,29 @@ DEFAULT_MAX_FOREACH_ITEMS = 1000
 
 
 class RunnerError(Exception):
-    """フロー実行の停止（未捕捉エラー → 呼び出し側で源内 ERROR へ写像）。"""
+    """フロー実行の停止（未捕捉エラー → 呼び出し側で源内OSS の ERROR へ写像）。
+
+    `reason` は**大文字スネークの理由コードのみ**を入れる。詳細は `detail` へ分ける。
+    reason に `f"CODE: {詳細}"` と詰めると呼び出し側が `reason == "CODE"` で判定できず、
+    日本語の文章を入れると機械可読な理由コード体系から外れるため
+    （tests/test_user_messages.py が両方を落とす）。
+
+    `detail` は例外メッセージには載せるが**応答には載せない**。ノード由来の詳細には
+    データが混ざりうるため（値フリーのログ／応答方針を保つ）。
+    """
 
     def __init__(
         self,
         reason: str,
         step_id: str = "",
         coordinates: dict[str, Any] | None = None,
+        detail: str = "",
     ) -> None:
-        super().__init__(f"[{step_id}] {reason}")
+        super().__init__(f"[{step_id}] {reason}{f': {detail}' if detail else ''}")
         self.reason = reason
         self.step_id = step_id
         self.coordinates = coordinates
+        self.detail = detail
 
 
 # --- 検証レポート --------------------------------------------------------
@@ -139,7 +151,9 @@ class Runner:
         while pc is not None and pc < len(steps):
             guard += 1
             if guard > max_iters:
-                raise RunnerError("step 反復が上限を超過（ループ疑い）")
+                raise RunnerError(
+                    "STEP_LIMIT_EXCEEDED", detail=f"guard={guard} max_iters={max_iters}"
+                )
             step = steps[pc]
             stype = step.get("type")
 
@@ -180,14 +194,18 @@ class Runner:
         try:
             taken = expr.evaluate(when, env)
         except expr.ExprError as e:
-            raise RunnerError(f"BRANCH_EVAL_FAILED: {e}", step.get("id", "")) from e
+            raise RunnerError(
+                "BRANCH_EVAL_FAILED", step.get("id", ""), detail=str(e)
+            ) from e
         return step["then"] if taken else step["else"]
 
     def _run_node(self, step: dict[str, Any], env: Envelope, ctx: NodeContext) -> None:
         step_id = step.get("id", "")
         node = self.registry.get(step.get("type", ""))
         if node is None:
-            raise RunnerError(f"UNKNOWN_NODE_TYPE: {step.get('type')!r}", step_id)
+            raise RunnerError(
+                "UNKNOWN_NODE_TYPE", step_id, detail=repr(step.get("type"))
+            )
         inputs = {name: _resolve_input(ref, env) for name, ref in step.get("in", {}).items()}
         on_error = step.get("on_error", "fail")
         try:
@@ -200,7 +218,7 @@ class Runner:
                     step, {n: copy.deepcopy(step.get("default")) for n in _out_names(step)}, env
                 )
                 return
-            raise RunnerError(e.reason, step_id, e.coordinates()) from e
+            raise RunnerError(e.reason, step_id, e.coordinates(), detail=e.message) from e
         except NodeError as e:
             if on_error == "skip":
                 return
@@ -209,7 +227,7 @@ class Runner:
                     step, {n: copy.deepcopy(step.get("default")) for n in _out_names(step)}, env
                 )
                 return
-            raise RunnerError(e.reason, step_id) from e
+            raise RunnerError(e.reason, step_id, detail=e.message) from e
         self._write_outputs(step, outputs, env)
 
     def _write_outputs(
@@ -243,8 +261,9 @@ class Runner:
             raise RunnerError("FOREACH_NOT_LIST", step.get("id", ""))
         if len(seq) > self.max_foreach_items:
             raise RunnerError(
-                f"FOREACH_LIMIT_EXCEEDED: {len(seq)} > {self.max_foreach_items}",
+                "FOREACH_LIMIT_EXCEEDED",
                 step.get("id", ""),
+                detail=f"{len(seq)} > {self.max_foreach_items}",
             )
         as_name = step.get("as", "item")
         body_ids = step.get("body", [])
@@ -304,18 +323,25 @@ class Runner:
                 report.add("static", sid, "MISSING_TYPE")
                 continue
             if stype == "branch":
-                for key in ("when", "then", "else"):
-                    if key not in step:
-                        report.add("static", sid, f"BRANCH_MISSING_{key.upper()}")
+                # 理由コードは report.add の引数にリテラルで書く（docs/cli.md との
+                # 突合テストが AST で全数を拾えるように。tests/test_reason_codes.py）。
+                if "when" not in step:
+                    report.add("static", sid, "BRANCH_MISSING_WHEN")
+                if "then" not in step:
+                    report.add("static", sid, "BRANCH_MISSING_THEN")
+                if "else" not in step:
+                    report.add("static", sid, "BRANCH_MISSING_ELSE")
                 if "when" in step:
                     try:
                         expr.compile_condition(step["when"])
                     except expr.ExprError as e:
                         report.add("static", sid, "BRANCH_WHEN_UNCOMPILABLE", str(e))
-                for key in ("then", "else"):
-                    tgt = step.get(key)
-                    if tgt and tgt != END and tgt not in ids:
-                        report.add("static", sid, f"BRANCH_{key.upper()}_UNRESOLVED", tgt)
+                then_tgt = step.get("then")
+                if then_tgt and then_tgt != END and then_tgt not in ids:
+                    report.add("static", sid, "BRANCH_THEN_UNRESOLVED", then_tgt)
+                else_tgt = step.get("else")
+                if else_tgt and else_tgt != END and else_tgt not in ids:
+                    report.add("static", sid, "BRANCH_ELSE_UNRESOLVED", else_tgt)
             elif stype == "foreach":
                 if "foreach" not in step:
                     report.add("static", sid, "FOREACH_MISSING_REF")
@@ -325,6 +351,12 @@ class Runner:
             else:
                 if stype not in self.registry:
                     report.add("static", sid, "UNKNOWN_NODE_TYPE", str(stype))
+                elif writes_unsanitized_spreadsheet(step):
+                    # format = "text" は無害化しない。表計算ソフトが開く名前との
+                    # 組み合わせを fail-closed で落とす（数式インジェクション）。
+                    report.add(
+                        "static", sid, "TEXT_FORMAT_SPREADSHEET_NAME", str(step.get("name", ""))
+                    )
             # next の到達性（END 予約 id は常に有効）
             nxt = step.get("next")
             if nxt and nxt != END and nxt not in ids:

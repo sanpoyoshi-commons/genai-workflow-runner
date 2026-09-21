@@ -38,7 +38,7 @@ def _op_filter(df: pd.DataFrame, spec: dict[str, Any]) -> pd.DataFrame:
         return df[series < spec["lt"]]
     if "le" in spec:
         return df[series <= spec["le"]]
-    raise NodeError("BAD_OP", "filter は eq/ne/gt/ge/lt/le のいずれかが必要")
+    raise NodeError("BAD_OP", "op=filter expected=eq|ne|gt|ge|lt|le")
 
 
 def _op_dropna(df: pd.DataFrame, spec: dict[str, Any]) -> pd.DataFrame:
@@ -91,7 +91,7 @@ class FileTransformNode(Node):
     ) -> dict[str, Any]:
         table = inputs.get("table")
         if not isinstance(table, dict):
-            raise NodeError("TABLE_MISSING", "入力 table が TableRef ではない")
+            raise NodeError("TABLE_MISSING", "input=table expected=TableRef")
         df = table_ref_to_df(cast(TableRef, table))
         ops = config.get("ops") or []
         for spec in ops:

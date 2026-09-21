@@ -1,9 +1,13 @@
 # 委譲先（LLM / RAG / CI）への接続と環境変数
 
-`llm` / `retrieval` / `code_interpreter` ノードは、推論・検索・コード実行を**源内 API へ
+`llm` / `retrieval` / `code_interpreter` ノードは、推論・検索・コード実行を**ガバメントAI 源内 OSS の API へ
 委譲**します。gwr 自身はサンドボックスも LLM も持ちません。委譲先の
-**リクエスト/レスポンス契約は 3 つとも同一**（封筒 `{inputs:{…}} → {outputs, artifacts?}`）で、
+**リクエスト/レスポンス契約は 3 つとも同一**（envelope `{inputs:{…}} → {outputs, artifacts?}`）で、
 **違うのは認証だけ**です。
+
+> ここでいう envelope は**源内OSS の Web プロトコルのリクエスト/レスポンスの包み**で、gwr 内部の
+> `Envelope`（ステップ間でデータを渡すスロットの入れ物 →
+> [Envelope とスロット](flow-toml.md#envelope-とスロット)）とは別物です。
 
 | 環境 | 委譲先ルート | 認証 |
 |---|---|---|
@@ -78,7 +82,7 @@ env から配線されます（`run` / `serve` の WebUI E2E 用）。
 
 ## RAG の「該当なし」判定
 
-源内 RAG は該当が無くても、**空ではなく「該当なし」の文章を 200 で返します**
+源内OSS の RAG は該当が無くても、**空ではなく「該当なし」の文章を 200 で返します**
 （GCP lawsy 由来の固定文をオンプレ版も忠実にポート／AWS は LLM 生成文で常に非空）。
 したがって gwr の「空 = 該当なし」だけでは該当なし分岐を出せません。
 
@@ -101,9 +105,9 @@ else = "hit"
 
 優先順は **引数（`--no-result-marker*`） > 環境変数**。サンプルは
 [`examples/rag-no-result-markers.example.txt`](../examples/rag-no-result-markers.example.txt)
-（源内 law-rag の no-result 文 3 種をコメント付きで同梱、既定は無効）。
+（源内OSS の law-rag の no-result 文 3 種をコメント付きで同梱、既定は無効）。
 
-> 源内固有の文言は gwr 本体に焼かず、運用設定で注入する方針です。
+> 源内OSS 固有の文言は gwr 本体に焼かず、運用設定で注入する方針です。
 > マーカー未設定時は常に「該当あり」側に流れ、本文中に「該当なし」文がそのまま出ます。
 
 ---

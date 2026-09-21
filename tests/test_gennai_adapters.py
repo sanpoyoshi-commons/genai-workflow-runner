@@ -138,7 +138,7 @@ def test_rag_whitespace_answer_treated_as_empty():
 
 
 def test_rag_no_result_marker_maps_to_empty_docs():
-    """源内 RAG は no-match でも非空の「該当なし」文を返す→運用注入マーカーで docs=[]。"""
+    """源内OSS の RAG は no-match でも非空の「該当なし」文を返す→運用注入マーカーで docs=[]。"""
     marker = "クエリから関連する法令を特定できませんでした。法令名を含めて再構成してください。"
     client = _client([_resp(200, {"outputs": marker, "usageMetadata": []})])
     adapter = GennaiRetrievalAdapter(
@@ -185,7 +185,8 @@ def test_ci_request_shaping_and_artifacts():
 
 
 def test_rag_adapter_forwards_extra_headers_bearer():
-    """オンプレ版用：RAG アダプタに渡した Bearer が封筒リクエストに載る（本番＝x-api-key のまま）。"""
+    """オンプレ版用：RAG アダプタに渡した Bearer が封筒リクエストに載る
+    （本番＝x-api-key のまま）。"""
     client = _client([_resp(200, {"outputs": "答え"})])
     t = client.transport
     adapter = GennaiRetrievalAdapter(

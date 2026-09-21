@@ -1,11 +1,11 @@
-"""委譲先（源内 ExApp）への本番アダプタ実装。
+"""委譲先（源内OSS の ExApp）への本番アダプタ実装。
 
 - LLM : Azure OpenAI 互換（Chat Completions / Responses）。封筒ではなく OpenAI ネイティブ形。
 - RAG : genai-web 封筒（question 等 → outputs）。回答 Markdown を 1 件の Doc に写す。
 - CI  : genai-web 封筒（input_text + files → artifacts）。
 
 接続値（endpoint / api_key / user_id）は環境変数化して注入する想定（コードに秘匿値を持たない）。
-源内の I/O 形（エンドポイント・JSON・キー）にのみ準拠するアダプタ。
+源内OSS の I/O 形（エンドポイント・JSON・キー）にのみ準拠するアダプタ。
 プロンプト全文やアルゴリズムは持たない。
 """
 
@@ -40,7 +40,7 @@ def _user_text(inputs: dict[str, Any]) -> str:
 
 
 def file_refs_to_inputs_files(refs: list[FileRef], key: str = "files") -> list[dict[str, Any]]:
-    """FileRef[] を源内の送出形式（同期/UI 生成形に固定）へ整形する。"""
+    """FileRef[] を源内OSS の送出形式（同期/UI 生成形に固定）へ整形する。"""
     return [
         {
             "key": key,
@@ -84,7 +84,9 @@ class GennaiLLMAdapter:
         if resp.status >= 400:
             # 応答本文も載せる（model not found 等の診断のため・先頭 300 字）
             raise TransportError(
-                "LLM_HTTP_ERROR", f"status={resp.status} body={resp.body_text[:300]}"
+                "LLM_HTTP_ERROR",
+                f"status={resp.status} body={resp.body_text[:300]}",
+                status=resp.status,
             )
         data = resp.json()
         text = self._extract_text(data)
@@ -127,20 +129,20 @@ class GennaiLLMAdapter:
 
 
 class GennaiRetrievalAdapter:
-    """源内 RAG ExApp（封筒）。回答 Markdown を Doc に写像する。
+    """源内OSS の RAG ExApp（封筒）。回答 Markdown を Doc に写像する。
 
     委譲先 RAG は「検索＋回答生成＋引用」を行い `{outputs(md), usageMetadata}` を返し、
     gwr の Doc[] には合成回答を 1 件の Doc（id="rag_answer"）として載せる。
 
-    **no-result の判定（実機で確定した契約）**：源内 RAG は該当が無くても **空ではなく
+    **no-result の判定（実機で確定した契約）**：源内OSS の RAG は該当が無くても **空ではなく
     「該当なし」の文章を 200 で返す**（GCP lawsy 由来の固定文 3 種をオンプレ版も忠実ポート。
     AWS は LLM 生成文＋footer で常に非空）。よって「空＝該当なし」は成り立たない。
 
     no-result の判定は次の 2 段：
     - 回答が空/空白（真に空を返す委譲先向けの保険）。
-    - 回答（strip 済み）が **運用注入の no-result マーカー**のいずれかに一致（源内の
+    - 回答（strip 済み）が **運用注入の no-result マーカー**のいずれかに一致（源内OSS の
       「該当なし」文）。マーカーは運用者が `no_result_markers` で注入する＝gwr 本体に
-      源内固有の日本語を焼かない。日本語本文の意味解釈はしない。
+      源内OSS 固有の日本語を焼かない。日本語本文の意味解釈はしない。
 
     no-result なら `docs=[]` を返す（空内容の Doc を捏造しない）。フロー側は
     `branch when="len($.docs.X) == 0"` で「該当なし」分岐を書ける。
@@ -190,7 +192,7 @@ class GennaiRetrievalAdapter:
 
 
 class GennaiCodeInterpreterAdapter:
-    """源内 Code Interpreter ExApp（封筒）。input_text + files → artifacts。"""
+    """源内OSS の Code Interpreter ExApp（封筒）。input_text + files → artifacts。"""
 
     def __init__(
         self,

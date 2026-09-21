@@ -1,0 +1,19 @@
+version = "1"                       # フォーマット版
+
+# =====================================================================
+# 委譲なしの最小フロー（動作確認用）。
+# LLM/RAG/CI を一切呼ばず、固定文字列 "HelloWorld" を返すだけ。
+# hidden 入力の default_value が vars.greeting に束縛され、
+# それをそのまま text 出力に出す（steps なし）。
+# =====================================================================
+
+[[inputs]]
+key = "greeting"
+type = "hidden"
+default_value = "HelloWorld"
+
+[[outputs]]
+key = "msg"
+from = "$.vars.greeting"
+type = "text"
+label = "メッセージ"

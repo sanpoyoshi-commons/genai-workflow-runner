@@ -163,3 +163,51 @@ def test_sanitize_cell_unit():
     assert sanitize_cell("+x") == "'+x"
     assert sanitize_cell("normal") == "normal"
     assert sanitize_cell(5) == 5
+
+
+# --- file.write format="text"（scalar → FileRef） -----------------------
+def test_write_text_artifact_roundtrip():
+    text = 'version = "1"\n# 日本語コメント\n'
+    out = FileWriteNode().run(
+        {"text": text}, {"format": "text", "name": "flow.toml"}, CTX
+    )["out"]
+    assert out["display_name"] == "flow.toml"
+    assert out["mime"] == "text/plain"
+    assert base64.b64decode(out["contents"]).decode("utf-8") == text
+
+
+def test_write_text_signature_takes_scalar_not_table():
+    assert FileWriteNode.signature({"format": "text"}).inputs == {"text": "scalar"}
+    assert FileWriteNode.signature({"format": "csv"}).inputs == {"table": "TableRef"}
+    assert FileWriteNode.signature({}).inputs == {"table": "TableRef"}
+
+
+def test_write_text_default_name():
+    out = FileWriteNode().run({"text": "x"}, {"format": "text"}, CTX)["out"]
+    assert out["display_name"] == "output.txt"
+
+
+def test_write_text_requires_a_string():
+    with pytest.raises(NodeError) as excinfo:
+        FileWriteNode().run({"text": {"not": "a string"}}, {"format": "text"}, CTX)
+    assert excinfo.value.reason == "TEXT_MISSING"
+
+
+def test_write_text_does_not_sanitize_spreadsheet_formulas():
+    """text は表計算で開くものではないので無害化しない（TOML の = が壊れない）。"""
+    text = '=SUM(A1:A2)\nkey = "value"\n'
+    out = FileWriteNode().run({"text": text}, {"format": "text"}, CTX)["out"]
+    assert base64.b64decode(out["contents"]).decode("utf-8") == text
+
+
+def test_write_table_formats_still_sanitize():
+    """csv/xlsx 側の数式インジェクション無害化は従来どおり効く。"""
+    table = _table([{"a": "=SUM(1)"}], ["a"])
+    out = FileWriteNode().run({"table": table}, {"format": "csv"}, CTX)["out"]
+    assert "'=SUM(1)" in base64.b64decode(out["contents"]).decode("utf-8")
+
+
+def test_write_unsupported_format_is_refused():
+    with pytest.raises(NodeError) as excinfo:
+        FileWriteNode().run({"text": "x"}, {"format": "pdf"}, CTX)
+    assert excinfo.value.reason == "UNSUPPORTED_FORMAT"
