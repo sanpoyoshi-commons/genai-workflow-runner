@@ -1,6 +1,6 @@
 [project]
 name = "gwr"
-version = "0.1.0"
+version = "0.2.0"
 description = "TOMLで多段のAI業務ワークフローを定義・実行する汎用ランナー（完全オリジナル・Apache-2.0）。ガバメントAI 源内 OSS の genai-web プロトコル準拠AIアプリとして接続可能"
 readme = "README.md"
 requires-python = ">=3.12"
