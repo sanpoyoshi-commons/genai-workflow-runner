@@ -42,7 +42,7 @@ def test_report_is_identical_to_validate_text_safe(flow_toml):
 
 
 def test_valid_flow_reports_ok():
-    assert _run(POC) == {"schema_version": 1, "ok": True, "issues": []}
+    assert _run(POC) == {"schema_version": 1, "ok": True, "issues": [], "warnings": []}
 
 
 def test_broken_flow_reports_issues():

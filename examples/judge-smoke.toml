@@ -1,0 +1,91 @@
+version = "1"
+
+# =====================================================================
+# judge 実機スモーク（型付きの問い → 答えと確信度で分岐）
+#   triage(委譲先=判定API) → gate(分岐) → billing / human
+# 委譲先は GWR_JUDGE_ENDPOINT（オンプレ版は api + Keycloak）。未設定なら ADAPTER_MISSING。
+#
+# 問い（questions）は**ここに静的に書く**。式解決されるのは in.state だけなので、
+# 実行時の入力で選択肢をすり替えることはできない。
+#
+# 【閾値は仮の値】下の 0.55 は「書き方を示すための値」で、根拠のある値ではない。
+# 使うモデルで自分のラベル付きデータを流して決めること。judge の confidence は
+# モデルによって分布が大きく違い、gemma4:e2b では 1.0 付近に張り付くため 0.8 のような
+# 値ではほぼ全件が上回り、分岐として働かない。
+# =====================================================================
+
+[[inputs]]
+key = "inquiry"
+type = "textarea"
+label = "問い合わせ本文"
+required = true
+
+# 判定を委譲する。model は「この閾値を決めたときのモデル」で、応答の model と
+# 食い違えば JUDGE_MODEL_MISMATCH で止まる（閾値の前提が崩れるため）。
+[[steps]]
+id = "triage"
+type = "judge"
+model = "gemma4:e2b"
+in = { state = "$.vars.inquiry" }
+out = "vars.triage"
+
+# choice：criteria を表で書くと、答えは A/B/C ではなく**ここで付けたキー**で返る。
+# 迷ったときの受け皿として "other" を必ず置く（無いと JUDGE_CHOICE_NO_FALLBACK の警告）。
+[steps.questions.route]
+type = "choice"
+instructions = "この問い合わせを扱うべき窓口はどれか"
+criteria = { billing = "請求・返金・支払い方法", technical = "不具合・エラー・操作方法", other = "上のどれにも当たらない" }
+
+# noul：Yes/No の判定。答えは真偽値で、確率と確信度は返らない。
+[steps.questions.urgent]
+type = "noul"
+instructions = "本日中の返信が必要か"
+
+# score：段階の評価。答えは期待値なので整数に張り付かない（2.999193 のような値になる）。
+# 丸めずに `>= 2.5` の形で比べること。表示専用に使い、分岐には使っていない。
+[steps.questions.severity]
+type = "score"
+instructions = "この問い合わせの影響の大きさ"
+criteria = ["影響なし", "軽微", "中程度", "重大"]
+
+# 答えと確信度の両方で分岐する。確信が低ければ人の確認へ倒す。
+[[steps]]
+id = "gate"
+type = "branch"
+when = "$.vars.triage.answers.route.choice == 'billing' && $.vars.triage.answers.route.confidence >= 0.55"
+then = "billing"
+else = "human"
+
+# 分岐ごとに**別の出力キー**へ書く。どちらへ倒れたかが出力を見れば分かる
+# （同じキーへ書くと、下書きの文だけでは分岐を読み取れない）。
+[[steps]]
+id = "billing"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "請求窓口の担当者として一次回答の下書きを書いてください。" }
+out = "vars.billing_msg"
+next = "__end__"
+
+# 低確信・他窓口・緊急のいずれも人が見る。判定の答えは**材料**であって指示ではない。
+[[steps]]
+id = "human"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "担当の振り分けに確信が持てませんでした。人が確認する旨の案内文を書いてください。" }
+out = "vars.human_msg"
+
+[[outputs]]
+key = "billing_msg"
+from = "$.vars.billing_msg"
+type = "text"
+label = "請求窓口の下書き（billing へ倒れたときだけ入る）"
+
+[[outputs]]
+key = "human_msg"
+from = "$.vars.human_msg"
+type = "text"
+label = "人の確認への案内（human へ倒れたときだけ入る）"
+
+[[outputs]]
+key = "triage"
+from = "$.vars.triage"
+type = "text"
+label = "判定結果"

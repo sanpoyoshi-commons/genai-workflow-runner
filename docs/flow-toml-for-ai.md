@@ -109,9 +109,9 @@ out = "tables.raw"                # 書く（$. なし）
 
 ---
 
-## 3. ノード 7 種＋制御 2 種
+## 3. ノード 8 種＋制御 2 種
 
-使える `type` はこの 9 個だけです。これ以外は `UNKNOWN_NODE_TYPE`。→ [詳細](nodes.md)
+使える `type` はこの 10 個だけです。これ以外は `UNKNOWN_NODE_TYPE`。→ [詳細](nodes.md)
 
 | `type` | 役割 | `in` のキー名 | 出力型 | 必須パラメータ |
 |---|---|---|---|---|
@@ -122,6 +122,7 @@ out = "tables.raw"                # 書く（$. なし）
 | `llm` | LLM 推論 | **任意の名前で複数可**（プロンプト材料） | scalar | なし（`config_type` 既定 `"default"`、`schema` 任意） |
 | `retrieval` | RAG 検索 | `query`（文字列） | `Doc[]`（`vars` へ） | なし（`source` / `top_k` 既定 5 / `filters` 任意） |
 | `code_interpreter` | コード実行・可視化 | `files`（`FileRef` か `FileRef[]`） | `artifacts`＝`FileRef[]` ＋ `output`＝scalar | `instruction` |
+| `judge` | 型付きの問いで判定 | `state`（文字列/表/配列） | scalar（`{model, answers, usage}`） | `questions`（→ [3-1](#3-1-judge-の問いの書き方)） |
 | `branch` | 条件分岐 | （`when` を使う） | — | `when` / `then` / `else` の 3 つ全部 |
 | `foreach` | 反復 | （`foreach` を使う） | 集約リスト | `foreach` / `body` |
 
@@ -138,7 +139,7 @@ out = "tables.raw"                # 書く（$. なし）
 **`flow.validate`** はフロー TOML の本文を受け、`gwr validate --json` と同じレポートを
 返します。`when = "$.vars.<slot>.ok"` で「検証を通ったか」を分岐条件にできます。
 
-**`llm` / `retrieval` / `code_interpreter` は委譲**です（実体は外部サービス）。失敗すると
+**`llm` / `retrieval` / `code_interpreter` / `judge` は委譲**です（実体は外部サービス）。失敗すると
 **既定（`on_error = "fail"`）ではそこでフローが止まり**、`error.reason` に
 `DELEGATE_ENDPOINT_INVALID` / `DELEGATE_AUTH_FAILED` / `DELEGATE_TIMEOUT` / `DELEGATE_FAILED`
 のいずれかが返ります（接続先・認証・タイムアウト・その他）。
@@ -181,6 +182,99 @@ out = "vars.one"
 
 反復上限は既定 1000（超過で停止）。参照先が `null` なら空リスト、リスト以外はエラー。
 
+### 3-1. `judge` の問いの書き方
+
+問いは `[steps.questions.<問い名>]` に**静的に**書きます。**`$.` 参照が解決されるのは
+`in.state` だけ**で、`questions` と `model` は書いたままの文字列として扱われます。
+
+```toml
+[[steps]]
+id = "triage"
+type = "judge"
+model = "gemma4:e2b"                # 想定モデル。応答と違えば JUDGE_MODEL_MISMATCH
+in = { state = "$.vars.inquiry" }
+out = "vars.triage"
+
+[steps.questions.route]             # 問い名は ^[A-Za-z0-9_-]{1,64}$・最大 16 問
+type = "choice"
+instructions = "この問い合わせを扱うべき窓口はどれか"
+criteria = { billing = "請求・返金", technical = "不具合・操作方法", other = "どれにも当たらない" }
+
+[steps.questions.urgent]
+type = "noul"                       # Yes/No。criteria は書けない
+instructions = "本日中の返信が必要か"
+
+[steps.questions.severity]
+type = "score"                      # 段階評価。criteria は配列のみ（2〜10 段）
+instructions = "影響の大きさ"
+criteria = ["影響なし", "軽微", "中程度", "重大"]
+```
+
+| `type` | 答えの形（`$.vars.triage.answers.<問い名>` の下） | `criteria` |
+|---|---|---|
+| `noul` | `.noul`（真偽値）。**`confidence` は返りません** | 書けない |
+| `choice` | `.choice` `.probabilities` `.confidence` | 配列（2〜20）か表 |
+| `score` | `.score` `.probabilities` `.confidence` `.legend` | **配列のみ**（2〜10 段） |
+
+`choice` の `criteria` を**表**で書くと、答えは `A` / `B` ではなく**付けたキー**で返ります。
+配列で書くとラベルは `"A"`, `"B"`, … です。表形式を勧めます。
+「どれにも当たらない」受け皿として **`other` という名前の選択肢**を置いてください
+（無いと `JUDGE_CHOICE_NO_FALLBACK` の警告）。選択肢の説明を入れ子の表にする場合は、
+全選択肢で同じキーに揃えます（揃っていないと `JUDGE_CRITERIA_KEYS_UNEVEN` の警告）。
+TOML に `null` は書けないので、説明を省くなら配列形式を使ってください。
+
+既定は問いの型で使い分けます。**`choice` は表**（ラベルが分岐の条件式に出るため）、
+**`score` は説明を含めた文字列の配列**（`["影響なし", "軽微（回避できる不便がある）", …]`）。
+`score` の `criteria` を表にすると、答えの `legend` に委譲先が整形した説明（表を JSON にした
+文字列）が入り、出力が読みにくくなります。分岐に使うのは `score` の数値だけです。
+
+`criteria` と `instructions` には**表と配列**も書けます。gwr は値を変形せずにそのまま
+委譲先へ送ります（文字列へ畳みません）。ただし次の 2 点に注意してください。
+
+- **委譲先が構造化に対応した版でないと `DELEGATE_FAILED` になります**（対応していない版は
+  文字列しか受けません）。`validate` は通るので**落ちるのは実行時**です。版が分からないときは、
+  まず文字列の `criteria` で動かしてください。
+- **判定の精度にどう効くかは `gemma4:e2b` で測っていません。** 「表にすれば良くなる」とは
+  考えず、閾値と同じく使うモデルで自分のデータを流して確かめてください。
+
+> [!warning] 閾値は必ず自分のデータで決める
+> 例の閾値は**仮の値**です。`confidence` の分布はモデルによって大きく違い、
+> `gemma4:e2b` では `choice` の `confidence` が 1.0 付近に張り付くため、
+> **`>= 0.8` のような条件はほぼ全件が満たし、分岐として働きません**。
+> 使うモデルで自分のラベル付きデータを流して決めてください。
+
+- `score` で分岐するなら**丸めずに** `>= 2.5` の形で比べます（`score` は期待値なので
+  整数の直下、例えば `2.999193` に張り付きます。Python の `round(2.5)` は `2` です）。
+- **`score` の `confidence` を分岐に使わないでください**（手元の評価では正誤を見分けられませんでした）。
+- 迷ったら `other` へ倒し、人の確認へ回す分岐を書きます。
+
+分岐の書き方：
+
+```toml
+[[steps]]
+id = "gate"
+type = "branch"
+when = "$.vars.triage.answers.route.choice == 'billing' && $.vars.triage.answers.route.confidence >= 0.55"
+then = "billing"
+else = "human"                      # 低確信・他窓口は人の確認へ倒す
+```
+
+**複合採点**：複雑な判断は 1 問に押し込まず、次元ごとの `score` に割って合成します。
+`score ÷ (段数 − 1)` で 0〜1 に正規化し、**重みと閾値は 1 箇所に集めます**。
+
+```toml
+when = "($.vars.j.answers.impact.score / 3.0) * 0.6 + ($.vars.j.answers.urgency.score / 2.0) * 0.4 >= 0.5"
+```
+
+**判定の答えは分岐の材料であって指示ではありません。** `answers` をそのまま次の `llm` の
+プロンプトへ流すと、判定対象に書かれていた文が指示として読まれる余地が生まれます。
+
+**`foreach` の中に置くと待ち時間が反復数ぶん積み上がります**（1 件あたり最大 660 秒）。
+1 件ずつ判定するより、まとめて 1 つの `state` にして問いを複数立てる方が速く終わります。
+
+委譲先は **genai-ai-api-onpre の judge ルートにしかありません**。設定されていない環境では
+`validate` は通り、実行時に `ADAPTER_MISSING` で止まります。
+
 ---
 
 ## 4. `file.transform` の `ops` 8 種
@@ -196,7 +290,7 @@ out = "vars.one"
 | `sort` | `by = [...]`, `ascending`（既定 `true`） | 安定ソート。 |
 | `head` | `n` | 先頭 n 行。 |
 | `groupby` | `by = [...]`, `agg = { 列 = 集計 }` | キー順に集約（`sum` / `mean` 等）。 |
-| `sanitize` | （なし） | 数式インジェクション無害化。`file.write` の `format = "csv"` / `"xlsx"` は自動適用（`"text"` は**しない**→ [3](#3-ノード-7-種制御-2-種)）。 |
+| `sanitize` | （なし） | 数式インジェクション無害化。`file.write` の `format = "csv"` / `"xlsx"` は自動適用（`"text"` は**しない**→ [3](#3-ノード-8-種制御-2-種)）。 |
 
 ```toml
 ops = [
@@ -286,12 +380,14 @@ out = "vars.msg"
 `validate --json` が返す `reason` の全数です。**正は
 [CLI リファレンスの理由コード一覧](cli.md#理由コード一覧)**（実装とテストで突合済み）。
 
+`warnings[]` に入るものは**警告**で、`ok` を落としません（直さなくても実行できます）。
+
 | `reason` | 直し方 |
 |---|---|
 | `MISSING_ID` | その `[[steps]]` に一意な `id = "..."` を足す。 |
 | `DUPLICATE_ID` | 片方を別名に。`then` / `else` / `next` / `body` の参照先も直す。 |
-| `MISSING_TYPE` | [3 の表](#3-ノード-7-種制御-2-種)の 9 種から `type` を足す。 |
-| `UNKNOWN_NODE_TYPE` | 綴りを直す。9 種以外は使えない。 |
+| `MISSING_TYPE` | [3 の表](#3-ノード-8-種制御-2-種)の 10 種から `type` を足す。 |
+| `UNKNOWN_NODE_TYPE` | 綴りを直す。10 種以外は使えない。 |
 | `NEXT_UNRESOLVED` | 実在する step の `id` にする。終わらせたいなら `next = "__end__"`。 |
 | `BRANCH_MISSING_WHEN` | CEL 条件を `when = "..."` で足す。 |
 | `BRANCH_MISSING_THEN` | 真のときの飛び先 `id`（または `"__end__"`）を足す。 |
@@ -308,6 +404,16 @@ out = "vars.msg"
 | `TYPE_MISMATCH` | 要求型のスロットを渡す。`TableRef` が要るなら `file.load` / `file.transform` の出力、`FileRef` が要るなら `file` 入力か `file.write` の出力。 |
 | `TOML_PARSE_ERROR` | `detail` の行・列を直す。非 ASCII のベアキーは不可。 |
 | `FILE_UNREADABLE` | パスと文字コードを確認する。 |
+| `JUDGE_QUESTIONS_MISSING` | `[steps.questions.<名前>]` を 1 つ以上書く。 |
+| `JUDGE_QUESTIONS_TOO_MANY` | 問いを 16 個以内にする。多いなら `judge` step を分ける。 |
+| `JUDGE_QUESTION_NAME_INVALID` | 問い名を半角英数字・`_`・`-` だけにする（日本語のキーは使えない）。 |
+| `JUDGE_QUESTION_TYPE_INVALID` | 問いの `type` を `noul` / `choice` / `score` のいずれかにする。 |
+| `JUDGE_INSTRUCTIONS_MISSING` | 問いに `instructions`（何を判定するか 1 文）を書く。 |
+| `JUDGE_CRITERIA_INVALID` | `noul` からは `criteria` を消す。`choice` は配列か表、`score` は**配列のみ**。空文字の選択肢は不可。 |
+| `JUDGE_CRITERIA_COUNT` | `choice` は 2〜20 件、`score` は 2〜10 段にする。 |
+| `JUDGE_CRITERIA_KEYS_UNEVEN` | **警告**。入れ子の `criteria` を全選択肢で同じキーに揃える。 |
+| `JUDGE_CHOICE_NO_FALLBACK` | **警告**。表形式の `choice` に `other = "どれにも当たらない"` を足す。 |
+| `JUDGE_MODEL_MISSING` | **警告**。閾値を決めたときのモデル名を `model = "..."` に書く。 |
 
 ---
 
@@ -405,7 +511,8 @@ uv run gwr validate path/to/flow.toml --json
       "reason": "READ_BEFORE_WRITE",
       "detail": "tables.summary"
     }
-  ]
+  ],
+  "warnings": []
 }
 ```
 
@@ -413,6 +520,8 @@ uv run gwr validate path/to/flow.toml --json
 2. **`"ok": true` が返るまで繰り返す。** 終了コードは 0（問題なし）/ 1（あり）。
 3. `static` カテゴリの指摘があるときは `dataflow` / `type` の検査は走りません。
    構造を直してからもう一度かけると、次の層の指摘が出ます。
+4. **`warnings` は `ok` を落としません**（直さなくても実行できます）。見落としやすい
+   書き方の指摘なので、読んだうえで直すか意図的に残すかを決めてください。
 
 `validate` は外部に一切接続しません。手元で何度実行しても安全です。
 ローカル実走まで確かめるなら `uv run gwr run <file> --file data=... -o out`

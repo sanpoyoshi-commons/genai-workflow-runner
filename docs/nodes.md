@@ -13,10 +13,12 @@
 | [`llm`](#llm) | LLM 推論 | 源内OSS の API | 任意 | scalar |
 | [`retrieval`](#retrieval) | RAG 検索 | 源内OSS の API | `query` | `Doc[]` |
 | [`code_interpreter`](#code_interpreter) | コード実行・可視化 | 源内OSS の API | `files` | `FileRef` + scalar |
+| [`judge`](#judge) | 型付きの問いで判定 | 判定 API | `state` | scalar（判定結果） |
 
 `file.*` と `flow.validate` は外部に出ない**ローカル処理**、`llm` / `retrieval` /
-`code_interpreter` はガバメントAI 源内 OSS の API への**委譲**で、gwr 自身はサンドボックスも LLM も持ちません。委譲ノードを動かすには
-アダプタの注入（＝`GWR_*_ENDPOINT` 等）が必要です（[委譲先への接続](delegates.md)）。
+`code_interpreter` / `judge` は外部 API への**委譲**で、gwr 自身はサンドボックスも LLM も
+持ちません。委譲ノードを動かすにはアダプタの注入（＝`GWR_*_ENDPOINT` 等）が必要です
+（[委譲先への接続](delegates.md)）。
 
 ---
 
@@ -279,6 +281,188 @@ out = { artifacts = "files.charts", output = "vars.msg" }
 
 ---
 
+## judge
+
+フロー中のテキスト（`state`）について**型付きの問い**を立て、答えと確信度を判定 API から
+受け取ります。gwr 自身は推論しません。答えと確信度で `branch` を分岐させるのが用途です。
+
+```toml
+[[steps]]
+id = "triage"
+type = "judge"
+model = "gemma4:e2b"                  # 想定モデル。応答と違えば止まる
+in = { state = "$.vars.inquiry" }     # 式解決されるのは in.state だけ
+out = "vars.triage"
+
+[steps.questions.route]
+type = "choice"
+instructions = "この問い合わせを扱うべき窓口はどれか"
+criteria = { billing = "請求・返金", technical = "不具合・操作方法", other = "どれにも当たらない" }
+
+[steps.questions.urgent]
+type = "noul"
+instructions = "本日中の返信が必要か"
+
+[steps.questions.severity]
+type = "score"
+instructions = "影響の大きさ"
+criteria = ["影響なし", "軽微", "中程度", "重大"]
+```
+
+| キー | 種別 | 説明 |
+|---|---|---|
+| `in.state` | 入力 | 判定対象。文字列・表・配列のいずれか（`null` は `STATE_MISSING`）。 |
+| `questions` | パラメータ | 問い名 → 問いの定義。1〜16 件。問い名は `^[A-Za-z0-9_-]{1,64}$`。 |
+| `model` | 任意 | 想定モデル。委譲先へ送り、**応答の `model` と完全一致しなければ停止**。 |
+| `out` | 出力 | `{model, answers, usage}` の dict（scalar 扱い）。 |
+
+`out` は `out = { answers = "vars.a", model = "vars.m", usage = "vars.u" }` のマップ形でも
+書けますが、`branch` から 1 スロットで辿れる単一 `out` を勧めます。
+
+### 問いの 3 型
+
+| `type` | 答えの形 | `confidence` |
+|---|---|---|
+| `noul` | `{type, noul}`（真偽値）。`criteria` は書けない | **返りません** |
+| `choice` | `{type, choice, probabilities, confidence}` | あり |
+| `score` | `{type, score, probabilities, confidence, legend}` | あり |
+
+`criteria` の書き方は 2 通りです。
+
+- **配列**：`criteria = ["請求", "不具合"]` → 答えのラベルは `"A"`, `"B"`, … になります。
+- **表**：`criteria = { billing = "請求", other = "…" }` → 答えのラベルは**ここで付けたキー**。
+
+表形式を勧めます。`$.vars.triage.answers.route.choice == 'billing'` と書けて、選択肢を
+足しても記号がずれません。選択肢の説明は表でも書けます（`criteria.billing.what` のように
+入れ子にすると、全選択肢で同じキーに揃っているかを `validate` が見ます）。
+
+既定は問いの型で使い分けてください。
+
+- **`choice` は表。** ラベル（`billing` など）が分岐の条件式に出るため、記号だと選択肢を
+  足したときにずれます。
+- **`score` は説明を含めた文字列の配列。** `criteria = ["影響なし", "軽微（回避できる不便が
+  ある）", …]` のように、1 要素に段階の名前と説明をまとめて書きます。`score` の `criteria` を
+  表にすると、答えの `legend` に**委譲先が整形した説明（表を JSON にした文字列）**が入り、
+  出力が読みにくくなります。分岐に使うのは `score` の数値だけなので、`legend` は読みやすく
+  保つほうが得です。
+
+> [!note] TOML には `null` がありません
+> 判定 API の仕様では「説明を付けない選択肢」を `null` で書けますが、TOML では書けません。
+> 説明が要らないときは配列形式を使うか、短い説明を書いてください。
+
+### 表・配列で書いた criteria と instructions
+
+`criteria` と `instructions` には、文字列のほかに**表と配列**も書けます。gwr は値を
+**変形せずにそのまま委譲先へ送ります**（文字列へ畳みません）。
+
+```toml
+[steps.questions.route.instructions]
+task = "窓口を決める"
+notes = ["社内規程に従う", "迷ったら other"]
+
+[steps.questions.route.criteria.billing]
+what = "請求・返金・支払い方法"
+not_for = "見積の依頼"
+examples = ["金額が違う", "返金してほしい"]
+```
+
+3 型そろった全体は [`examples/judge-structured.toml`](../examples/judge-structured.toml) にあります
+（`score` の `criteria` を「表の配列」で書いた形も入っています）。文字列で書いた版は
+[`examples/judge-smoke.toml`](../examples/judge-smoke.toml) で、問い以外は同じ形です。
+
+使う前に次の 2 点を確かめてください。
+
+> [!warning] 委譲先が構造化に対応した版でないと断られる
+> 表・配列の `criteria` と `instructions` は、**genai-ai-api-onpre の judge ルートが
+> 構造化に対応した版**でなければ受け付けられず、`DELEGATE_FAILED` になります
+> （対応していない版は文字列しか受けません）。`validate` は通るので、**落ちるのは実行時**です。
+> 委譲先の版が分からないときは、まず文字列の `criteria` で動かしてください。
+
+> [!warning] 判定の精度にどう効くかは、このプロジェクトでは測っていない
+> 構造化した `criteria` で確信度が上がるという報告は判定 API の元になった仕様にありますが、
+> **`gemma4:e2b` で測ってはいません。**「表にすれば良くなる」とは考えず、
+> 閾値と同じく**使うモデルで自分のラベル付きデータを流して確かめて**ください。
+
+### 閾値の決め方（重要）
+
+**例に出てくる閾値は仮の値です。使うモデルで自分のラベル付きデータを流して決めてください。**
+`confidence` の分布はモデルによって大きく違います。例えば `gemma4:e2b` では `choice` の
+`confidence` が 1.0 付近に張り付くため、`>= 0.8` のような条件はほぼ全件が満たし、
+**分岐として働きません**。
+
+- `score` で分岐するなら**丸めずに** `>= 2.5` の形で比べます。`score` は期待値なので
+  整数の直下（例：規則上 3 の件が `2.999193`）に張り付き、Python の `round(2.5)` は `2` です。
+- `score` の `confidence` を分岐に使うことは勧めません（手元の評価では正誤を見分けられませんでした）。
+- 迷ったら `other` へ倒し、人の確認へ回す分岐を書いてください。
+
+### 分岐した先を出力から読めるようにする
+
+`branch` の行き先ごとに**別の出力キー**へ書いてください。同じキーへ書くと、出力を見ても
+どちらへ倒れたかが分かりません。LLM をモックにして動作確認するときは、どの分岐でも同じ
+固定文が返るため特に見分けが付かず、判定の答えから分岐条件を手で辿ることになります。
+
+```toml
+[[steps]]
+id = "billing"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "…" }
+out = "vars.billing_msg"      # 分岐ごとに別のスロット
+next = "__end__"
+
+[[steps]]
+id = "human"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "…" }
+out = "vars.human_msg"
+```
+
+倒れなかった側の出力は空になります（見出しだけが残ります）。
+
+### 複合採点の書き方
+
+複雑な判断を 1 問に押し込まず、次元ごとの `score` に割ってから合成します。
+`score ÷ (段数 − 1)` で 0〜1 に正規化し、**重みと閾値はフロー TOML の 1 箇所に集めます**。
+
+```toml
+# 影響 4 段（0..3）と緊急度 3 段（0..2）を 0〜1 に正規化し、重み 0.6 / 0.4 で合成する。
+[[steps]]
+id = "gate"
+type = "branch"
+when = "($.vars.j.answers.impact.score / 3.0) * 0.6 + ($.vars.j.answers.urgency.score / 2.0) * 0.4 >= 0.5"
+then = "escalate"
+else = "normal"
+```
+
+重みや閾値を複数の `branch` に散らすと、後から基準を変えるときに必ず取りこぼします。
+
+### `foreach` の中に置くときの注意
+
+`judge` 1 件の待ち時間は最大で `GWR_JUDGE_TIMEOUT`（既定 660 秒）です。`foreach` の中に
+置くと**反復数ぶん直列に積み上がります**（`GWR_MAX_FOREACH_ITEMS` の既定は 1000）。
+gwr にはフロー全体の上限がないため、件数の上限は `foreach` の反復元を絞って決めてください。
+1 件ずつ判定するより、判定対象をまとめて 1 回の `state` にし、問いを複数立てる方が
+速くなります（委譲先は同じ `state` に対する 2 問目以降を大幅に短縮できるため）。
+
+### 答えは材料であって指示ではない
+
+判定の答えは**フローを分岐させるための材料**です。そのまま次の LLM ステップへ渡すと、
+判定対象に書かれていた文が指示として読まれる余地が生まれます。`answers` の値を後続の
+プロンプトへ流すときは、分岐の条件として使うか、引用であることが分かる形にしてください。
+
+### 委譲先
+
+判定の委譲先は **genai-ai-api-onpre の judge ルートにしかありません**。ガバメントAI 源内 OSS
+本体には対応するルートが無いため、そこでは `judge` ノードを動かせません。
+`GWR_JUDGE_ENDPOINT` が未設定の環境では、`validate` は通り（環境を見ないため）、
+実行時に `ADAPTER_MISSING` で止まります（[委譲先への接続](delegates.md#judgegwr_judge_)）。
+
+エラー：アダプタ未注入 `ADAPTER_MISSING` / `state` が無いか型違い `STATE_MISSING` /
+`questions` が `validate` の検査に引っかかる `JUDGE_QUESTIONS_INVALID` /
+応答が契約から外れた `JUDGE_ANSWER_INVALID` / 応答のモデルが `model` と違う
+`JUDGE_MODEL_MISMATCH` / 委譲先の失敗 `DELEGATE_*`（→ [委譲先の失敗](#委譲先の失敗)）。
+
+---
+
 ## 型と静的検証
 
 `gwr validate`（= `dry_run`）は各ノードの**入出力型シグネチャ**を使って、参照先が
@@ -288,15 +472,15 @@ out = { artifacts = "files.charts", output = "vars.msg" }
 
 ## 委譲先の失敗
 
-`llm` / `retrieval` / `code_interpreter` は外部サービスへの委譲なので、フロー側の誤りとは
-別に「相手が応じない」失敗が起きます。接続層（`TransportError`）と封筒（`EnvelopeError`）の
+`llm` / `retrieval` / `code_interpreter` / `judge` は外部サービスへの委譲なので、フロー側の
+誤りとは別に「相手が応じない」失敗が起きます。接続層（`TransportError`）と封筒（`EnvelopeError`）の
 失敗は**ノード層で 4 つの理由コードへ畳まれ**、利用者には定型文が返ります。
 
 | `reason` | 畳んでいるもの | 誰が直すか |
 |---|---|---|
 | `DELEGATE_ENDPOINT_INVALID` | 接続先が公開 HTTPS として不正（スキーム・ホスト無し・内部宛） | 運用者（`GWR_*_ENDPOINT`） |
 | `DELEGATE_AUTH_FAILED` | トークン取得の失敗、委譲先の 401 / 403 | 運用者（API キー・Keycloak の資格情報） |
-| `DELEGATE_TIMEOUT` | タイムアウト、ポーリング打ち切り、429 | 利用者（時間をおいて再実行） |
+| `DELEGATE_TIMEOUT` | タイムアウト、ポーリング打ち切り、429、504 | 利用者（時間をおいて再実行） |
 | `DELEGATE_FAILED` | 接続失敗、委譲先が返したエラー、想定外の応答 | 利用者は再実行、運用者はログ |
 
 振り分けは 2 段です。**接続先・認証・時間切れのように失敗の種類が確定するものを先に**決め、

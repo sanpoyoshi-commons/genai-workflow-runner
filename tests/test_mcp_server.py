@@ -118,6 +118,7 @@ def test_validate_ok_for_poc():
         "schema_version": 1,
         "ok": True,
         "issues": [],
+        "warnings": [],
     }
 
 
@@ -225,9 +226,11 @@ DELEGATE_ENV = {
     "GWR_LLM_ENDPOINT": "http://must-not-be-called.invalid/v1/chat/completions",
     "GWR_RAG_ENDPOINT": "http://must-not-be-called.invalid/api/law-rag",
     "GWR_CI_ENDPOINT": "http://must-not-be-called.invalid/api/code-interpreter",
+    "GWR_JUDGE_ENDPOINT": "http://must-not-be-called.invalid/api/judge",
     "GWR_LLM_API_KEY": "dummy",
     "GWR_RAG_API_KEY": "dummy",
     "GWR_CI_API_KEY": "dummy",
+    "GWR_JUDGE_API_KEY": "dummy",
 }
 
 DELEGATING_FLOW = """version = "1"
@@ -242,6 +245,18 @@ id = "retrieve"
 type = "retrieval"
 in = { query = "$.vars.q" }
 out = "vars.docs"
+
+[[steps]]
+id = "triage"
+type = "judge"
+model = "must-not-be-called"
+in = { state = "$.vars.q" }
+out = "vars.j"
+
+[steps.questions.route]
+type = "choice"
+instructions = "窓口はどれか"
+criteria = { billing = "請求", other = "どれでもない" }
 
 [[steps]]
 id = "answer"

@@ -20,12 +20,19 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from gwr import expr
 from gwr.datatypes import TypeLevel
 from gwr.envelope import Envelope
-from gwr.nodes.base import DataError, Node, NodeContext, NodeError
+from gwr.nodes.base import (
+    DataError,
+    IssueCategory,
+    IssueSeverity,
+    Node,
+    NodeContext,
+    NodeError,
+)
 from gwr.nodes.file_write import writes_unsanitized_spreadsheet
 
 CONTROL_TYPES = frozenset({"branch", "foreach"})
@@ -65,7 +72,7 @@ class RunnerError(Exception):
 
 
 # --- 検証レポート --------------------------------------------------------
-IssueCategory = Literal["static", "dataflow", "type"]
+# IssueCategory / IssueSeverity の定義元は gwr.nodes.base（ノードが static_check で使うため）。
 
 
 @dataclass(frozen=True)
@@ -78,16 +85,40 @@ class Issue:
 
 @dataclass
 class ValidationReport:
+    """検証の結果。**error と warning を別の配列に持つ。**
+
+    `ok` は error だけで決まる（`warnings` があっても True）。分けているのは、
+    `gwr validate --json` の応答（`SCHEMA_VERSION`）で `issues` と `ok` の意味を
+    変えないため＝既に `ok=false` になっているものが `ok=true` に変わらない。
+    警告は「直さなくても実行できるが、書き手が見落としやすい書き方」を指す。
+    """
+
     issues: list[Issue] = field(default_factory=list)
+    warnings: list[Issue] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.issues
 
-    def add(self, category: IssueCategory, step_id: str, reason: str, detail: str = "") -> None:
-        self.issues.append(Issue(category, step_id, reason, detail))
+    def add(
+        self,
+        category: IssueCategory,
+        step_id: str,
+        reason: str,
+        detail: str = "",
+        *,
+        severity: IssueSeverity = "error",
+    ) -> None:
+        """指摘を記録する。理由コードは**呼び出し側で文字列リテラル**にすること。
+
+        `severity` はキーワード専用にしてある。位置引数の並びを動かすと
+        tests/test_reason_codes.py の AST 抽出（第 3 引数を見る）が壊れるため。
+        """
+        target = self.warnings if severity == "warning" else self.issues
+        target.append(Issue(category, step_id, reason, detail))
 
     def by_category(self, category: IssueCategory) -> list[Issue]:
+        """error のうち該当カテゴリのものを返す（警告は含めない）。"""
         return [i for i in self.issues if i.category == category]
 
 
@@ -349,14 +380,20 @@ class Runner:
                     if bid not in ids:
                         report.add("static", sid, "FOREACH_BODY_UNRESOLVED", bid)
             else:
-                if stype not in self.registry:
+                node = self.registry.get(stype)
+                if node is None:
                     report.add("static", sid, "UNKNOWN_NODE_TYPE", str(stype))
-                elif writes_unsanitized_spreadsheet(step):
-                    # format = "text" は無害化しない。表計算ソフトが開く名前との
-                    # 組み合わせを fail-closed で落とす（数式インジェクション）。
-                    report.add(
-                        "static", sid, "TEXT_FORMAT_SPREADSHEET_NAME", str(step.get("name", ""))
-                    )
+                else:
+                    if writes_unsanitized_spreadsheet(step):
+                        # format = "text" は無害化しない。表計算ソフトが開く名前との
+                        # 組み合わせを fail-closed で落とす（数式インジェクション）。
+                        report.add(
+                            "static", sid, "TEXT_FORMAT_SPREADSHEET_NAME",
+                            str(step.get("name", "")),
+                        )
+                    # ノード固有の静的検査（既定は何もしない）。Runner に型ごとの分岐を
+                    # 増やさないための入口 → gwr.nodes.base.Node.static_check。
+                    node.static_check(step, sid, report)
             # next の到達性（END 予約 id は常に有効）
             nxt = step.get("next")
             if nxt and nxt != END and nxt not in ids:

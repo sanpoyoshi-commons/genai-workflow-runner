@@ -36,6 +36,15 @@ EXAMPLE_DESCRIPTIONS: dict[str, str] = {
         "検索結果が空かどうかで分岐する書き方。"
     ),
     "ci-smoke.toml": "指示＋入力ファイル → code_interpreter → 生成 artifacts と分析テキスト。",
+    "judge-smoke.toml": (
+        "judge → branch → llm。choice・noul・score の 3 型の問いを書き、答えと確信度で "
+        "分岐する例。criteria の表形式、閾値を仮の値として書く作法、分岐ごとに別の出力キーへ"
+        "書いて倒れた先を見せる作法が入っている。"
+    ),
+    "judge-structured.toml": (
+        "judge-smoke.toml と同じ 3 問を、criteria と instructions を表・表の配列で書いた版。"
+        "構造化した問いの書き方（表・入れ子の表・表の配列）を見る用。問い以外は smoke と同じ形。"
+    ),
     "toml-generator.toml": (
         "フロー TOML 自体を作るフロー。llm → flow.validate → branch → file.write（text）で、"
         "検証を通った場合だけ .toml を artifacts として返す。flow.validate の使い方の実例。"

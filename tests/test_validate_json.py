@@ -25,7 +25,7 @@ def _run_json(capsys, path: str) -> tuple[int, dict]:
 def test_json_ok_schema(capsys):
     rc, doc = _run_json(capsys, POC)
     assert rc == 0
-    assert doc == {"schema_version": SCHEMA_VERSION, "ok": True, "issues": []}
+    assert doc == {"schema_version": SCHEMA_VERSION, "ok": True, "issues": [], "warnings": []}
 
 
 def test_json_indent_matches_ui_spec_style(capsys):

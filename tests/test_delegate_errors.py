@@ -48,6 +48,9 @@ STATUS_MAP = {
     401: "DELEGATE_AUTH_FAILED",
     403: "DELEGATE_AUTH_FAILED",
     429: "DELEGATE_TIMEOUT",
+    # 504＝委譲先が自分の予算内に終えられなかった。「時間をおいて再実行」で直り得るので
+    # 429 と同じ扱いにする（2026-09-23 追加。judge が発端だが全委譲ノードに効く）。
+    504: "DELEGATE_TIMEOUT",
     400: "DELEGATE_FAILED",
     404: "DELEGATE_FAILED",
     409: "DELEGATE_FAILED",
@@ -145,6 +148,7 @@ def test_unknown_code_falls_back_to_failed():
         (TransportError("HTTP_TRANSPORT_ERROR", "error=refused"), "DELEGATE_FAILED"),
         (EnvelopeError("POLL_TIMEOUT", "attempts=30"), "DELEGATE_TIMEOUT"),
         (EnvelopeError("HTTP_ERROR", "status=429", None, 429), "DELEGATE_TIMEOUT"),
+        (EnvelopeError("HTTP_ERROR", "status=504", None, 504), "DELEGATE_TIMEOUT"),
         (EnvelopeError("HTTP_ERROR", "status=503", None, 503), "DELEGATE_FAILED"),
         (EnvelopeError("DELEGATE_ERROR", "boom", {"trace": "x"}), "DELEGATE_FAILED"),
     ],
@@ -178,6 +182,49 @@ def test_other_delegate_nodes_are_wrapped_too(node):
     app = WorkflowApp.from_toml(flow, adapters={node: adapter})
     result = app.invoke({"q": "これは質問です"})
     assert result["error"]["reason"].startswith("DELEGATE_")
+
+
+# --- 2-1. 504 は judge だけでなく全委譲ノードで「時間をおいて再実行」になる ---
+def _boom_flow(node: str, error):
+    """指定ノード 1 つだけのフローと、その失敗を投げるアダプタを組む。"""
+    flow = _LLM_FLOW.replace('type = "llm"', f'type = "{node}"')
+    if node == "retrieval":
+        flow = flow.replace('in = { prompt = "$.vars.q" }', 'in = { query = "$.vars.q" }')
+        return flow, {node: BoomRetrievalAdapter(error)}
+    if node == "code_interpreter":
+        flow = flow.replace(
+            'in = { prompt = "$.vars.q" }',
+            'in = { files = "$.vars.q" }\ninstruction = "集計する"',
+        )
+        return flow, {node: BoomCodeInterpreterAdapter(error)}
+    return flow, {node: BoomLLMAdapter(error)}
+
+
+@pytest.mark.parametrize("node", ["llm", "retrieval", "code_interpreter"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        TransportError("LLM_HTTP_ERROR", "status=504", 504),
+        EnvelopeError("HTTP_ERROR", "status=504", None, 504),
+    ],
+    ids=["TransportError", "EnvelopeError"],
+)
+def test_gateway_timeout_tells_the_user_to_retry_later(node, error):
+    """504 は judge のために足したが、**RAG・CI・LLM にも同じように効く**。
+
+    委譲先が自分の予算を使い切ったときに返る。利用者が取る行動は 429（混雑）と同じ
+    「時間をおいて再実行」なので、`DELEGATE_FAILED`（管理者に連絡）へは落とさない。
+    """
+    flow, adapters = _boom_flow(node, error)
+    result = WorkflowApp.from_toml(flow, adapters=adapters).invoke({"q": "これは質問です"})
+    assert result["error"]["reason"] == "DELEGATE_TIMEOUT"
+    assert "再実行" in result["outputs"]
+
+
+def test_gateway_timeout_is_not_confused_with_the_other_5xx():
+    """500・502・503 は従来どおり DELEGATE_FAILED のまま（504 だけを移した）。"""
+    for status in (500, 502, 503):
+        assert classify("HTTP_ERROR", status) == "DELEGATE_FAILED"
 
 
 # --- 3. 値が漏れないこと -------------------------------------------------

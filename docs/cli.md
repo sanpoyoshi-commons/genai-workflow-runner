@@ -62,7 +62,8 @@ uv run gwr validate examples/poc.toml --json
       "reason": "READ_BEFORE_WRITE",
       "detail": "tables.summary"
     }
-  ]
+  ],
+  "warnings": []
 }
 ```
 
@@ -74,36 +75,49 @@ uv run gwr validate examples/poc.toml --json
   JSON** で返ります（`TOML_PARSE_ERROR` / `FILE_UNREADABLE`）。
 - `schema_version` は出力形の版です。**`1` の間は既存の `reason` を改名・削除しません**
   （追加のみ）。破壊的変更が要るときはこの数値を上げます。
+- `warnings` は `issues` と**同じ形**の別配列です。**`ok` を落としません**（直さなくても
+  実行できる）。見落としやすい書き方を知らせるためのもので、`issues` と `ok` の意味は
+  2026-09-23 の追加でも変えていません（だから `schema_version` は `1` のまま）。
 
 ### 理由コード一覧
 
 `reason` の全数です。「直し方」は AI の自己修正の手がかりとして使えます。
 
-| `reason` | カテゴリ | 意味 | 典型的な直し方 |
-|---|---|---|---|
-| `MISSING_ID` | `static` | step に `id` が無い。 | その `[[steps]]` に一意な `id = "..."` を足す。 |
-| `DUPLICATE_ID` | `static` | 同じ `id` の step が 2 つ以上ある。 | 片方を別名にする。`then` / `else` / `next` / `body` の参照先も合わせて直す。 |
-| `MISSING_TYPE` | `static` | step に `type` が無い。 | ノード 7 種か制御 2 種（`branch` / `foreach`）の `type` を足す（[ノード](nodes.md)）。 |
-| `UNKNOWN_NODE_TYPE` | `static` | `type` が未知（`detail` ＝ 指定値）。 | 綴りを直す。使えるのは `file.load` / `file.transform` / `file.write` / `flow.validate` / `llm` / `retrieval` / `code_interpreter` / `branch` / `foreach` のみ。 |
-| `NEXT_UNRESOLVED` | `static` | `next` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` にする。そこで終わらせたいなら `next = "__end__"`。 |
-| `BRANCH_MISSING_WHEN` | `static` | `branch` に `when` が無い。 | CEL の条件式を `when = "..."` で足す（[式](expressions.md)）。 |
-| `BRANCH_MISSING_THEN` | `static` | `branch` に `then` が無い。 | 真のときの飛び先 `id`（または `"__end__"`）を足す。 |
-| `BRANCH_MISSING_ELSE` | `static` | `branch` に `else` が無い。 | 偽のときの飛び先 `id`（または `"__end__"`）を足す。`else` は省略できない。 |
-| `BRANCH_WHEN_UNCOMPILABLE` | `static` | `when` の CEL がコンパイルできない（`detail` ＝ 理由）。 | 許可関数 10 個だけを使い、bool を返す式にする。500 字 / 括弧ネスト 32 以内。`matches`（正規表現）は使えない。 |
-| `BRANCH_THEN_UNRESOLVED` | `static` | `then` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` か `"__end__"` にする。 |
-| `BRANCH_ELSE_UNRESOLVED` | `static` | `else` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` か `"__end__"` にする。 |
-| `FOREACH_MISSING_REF` | `static` | `foreach` step に反復元の `foreach` 参照が無い。 | `foreach = "$.tables.raw.data"` のように配列を指す参照を足す。 |
-| `FOREACH_BODY_UNRESOLVED` | `static` | `body` に挙げた `id` が存在しない（`detail` ＝ その `id`）。 | `body` の各 `id` を実在する step の `id` に直す。body の step は同じ `[[steps]]` 列に並べて書く。 |
-| `BAD_REFERENCE` | `static` | `in` の `$.` 参照が JMESPath として不正（`detail` ＝ 理由）。 | 非 ASCII や記号を含むキーは二重引用符で囲む（例 `$.tables.t.data[0]."売上"`）。 |
-| `TEXT_FORMAT_SPREADSHEET_NAME` | `static` | `file.write` の `format = "text"` と、表計算ソフトが開く `name` の組み合わせ（`detail` ＝ その `name`）。`text` は数式インジェクション無害化をしないため、無害化されていない内容が数式として解釈され得る。 | 表を出すなら `format = "csv"` / `"xlsx"` にする（そちらは無害化される）。文字列をそのまま出すなら `name` の拡張子を `.toml` / `.md` / `.txt` など表計算ソフトが開かないものにする。対象の拡張子は `.csv` / `.tsv` / `.xls` / `.xlsx` / `.xlsm` / `.slk` / `.dif`。 |
-| `READ_BEFORE_WRITE` | `dataflow` | 読もうとしたスロットを、上流のどの step も書いていない（`detail` ＝ スロット）。 | その `in` が読むスロットを、上流いずれかの step の `out` で書く。綴り誤りが最多。`[[inputs]]` 由来なら `files.<key>` / `vars.<key>`。 |
-| `OUTPUT_READ_BEFORE_WRITE` | `dataflow` | `[[outputs]]` の `from` が書かれていない（`detail` ＝ スロット、`step_id` は `"outputs"`）。 | `from` の綴りを直すか、そのスロットを `out` で書く step を足す。 |
-| `TYPE_MISMATCH` | `type` | `in` に渡した型がノードの要求と違う（`detail` ＝ `スロット:実型 != 引数名 requires 要求型`）。 | 要求型のスロットを渡す。`TableRef` が要るなら `file.load` / `file.transform` の出力を、`FileRef` が要るなら `file` 入力か `file.write` の出力を渡す。 |
-| `TOML_PARSE_ERROR` | `static` | TOML として読めない（`--json` 時のみ。`detail` ＝ 位置つきメッセージ、`step_id` は `null`）。 | `detail` の行・列を直す。非 ASCII のベアキーは不可（`"売上" = ...` と引用する）。 |
-| `FILE_UNREADABLE` | `static` | ファイルを開けない / UTF-8 で読めない（`--json` 時のみ。`step_id` は `null`）。 | パスと文字コードを確認する。 |
+| `reason` | カテゴリ | 種別 | 意味 | 典型的な直し方 |
+|---|---|---|---|---|
+| `MISSING_ID` | `static` | `error` | step に `id` が無い。 | その `[[steps]]` に一意な `id = "..."` を足す。 |
+| `DUPLICATE_ID` | `static` | `error` | 同じ `id` の step が 2 つ以上ある。 | 片方を別名にする。`then` / `else` / `next` / `body` の参照先も合わせて直す。 |
+| `MISSING_TYPE` | `static` | `error` | step に `type` が無い。 | ノード 8 種か制御 2 種（`branch` / `foreach`）の `type` を足す（[ノード](nodes.md)）。 |
+| `UNKNOWN_NODE_TYPE` | `static` | `error` | `type` が未知（`detail` ＝ 指定値）。 | 綴りを直す。使えるのは `file.load` / `file.transform` / `file.write` / `flow.validate` / `llm` / `retrieval` / `code_interpreter` / `judge` / `branch` / `foreach` のみ。 |
+| `NEXT_UNRESOLVED` | `static` | `error` | `next` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` にする。そこで終わらせたいなら `next = "__end__"`。 |
+| `BRANCH_MISSING_WHEN` | `static` | `error` | `branch` に `when` が無い。 | CEL の条件式を `when = "..."` で足す（[式](expressions.md)）。 |
+| `BRANCH_MISSING_THEN` | `static` | `error` | `branch` に `then` が無い。 | 真のときの飛び先 `id`（または `"__end__"`）を足す。 |
+| `BRANCH_MISSING_ELSE` | `static` | `error` | `branch` に `else` が無い。 | 偽のときの飛び先 `id`（または `"__end__"`）を足す。`else` は省略できない。 |
+| `BRANCH_WHEN_UNCOMPILABLE` | `static` | `error` | `when` の CEL がコンパイルできない（`detail` ＝ 理由）。 | 許可関数 10 個だけを使い、bool を返す式にする。500 字 / 括弧ネスト 32 以内。`matches`（正規表現）は使えない。 |
+| `BRANCH_THEN_UNRESOLVED` | `static` | `error` | `then` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` か `"__end__"` にする。 |
+| `BRANCH_ELSE_UNRESOLVED` | `static` | `error` | `else` の飛び先 `id` が存在しない（`detail` ＝ 飛び先）。 | 実在する step の `id` か `"__end__"` にする。 |
+| `FOREACH_MISSING_REF` | `static` | `error` | `foreach` step に反復元の `foreach` 参照が無い。 | `foreach = "$.tables.raw.data"` のように配列を指す参照を足す。 |
+| `FOREACH_BODY_UNRESOLVED` | `static` | `error` | `body` に挙げた `id` が存在しない（`detail` ＝ その `id`）。 | `body` の各 `id` を実在する step の `id` に直す。body の step は同じ `[[steps]]` 列に並べて書く。 |
+| `BAD_REFERENCE` | `static` | `error` | `in` の `$.` 参照が JMESPath として不正（`detail` ＝ 理由）。 | 非 ASCII や記号を含むキーは二重引用符で囲む（例 `$.tables.t.data[0]."売上"`）。 |
+| `TEXT_FORMAT_SPREADSHEET_NAME` | `static` | `error` | `file.write` の `format = "text"` と、表計算ソフトが開く `name` の組み合わせ（`detail` ＝ その `name`）。`text` は数式インジェクション無害化をしないため、無害化されていない内容が数式として解釈され得る。 | 表を出すなら `format = "csv"` / `"xlsx"` にする（そちらは無害化される）。文字列をそのまま出すなら `name` の拡張子を `.toml` / `.md` / `.txt` など表計算ソフトが開かないものにする。対象の拡張子は `.csv` / `.tsv` / `.xls` / `.xlsx` / `.xlsm` / `.slk` / `.dif`。 |
+| `READ_BEFORE_WRITE` | `dataflow` | `error` | 読もうとしたスロットを、上流のどの step も書いていない（`detail` ＝ スロット）。 | その `in` が読むスロットを、上流いずれかの step の `out` で書く。綴り誤りが最多。`[[inputs]]` 由来なら `files.<key>` / `vars.<key>`。 |
+| `OUTPUT_READ_BEFORE_WRITE` | `dataflow` | `error` | `[[outputs]]` の `from` が書かれていない（`detail` ＝ スロット、`step_id` は `"outputs"`）。 | `from` の綴りを直すか、そのスロットを `out` で書く step を足す。 |
+| `TYPE_MISMATCH` | `type` | `error` | `in` に渡した型がノードの要求と違う（`detail` ＝ `スロット:実型 != 引数名 requires 要求型`）。 | 要求型のスロットを渡す。`TableRef` が要るなら `file.load` / `file.transform` の出力を、`FileRef` が要るなら `file` 入力か `file.write` の出力を渡す。 |
+| `TOML_PARSE_ERROR` | `static` | `error` | TOML として読めない（`--json` 時のみ。`detail` ＝ 位置つきメッセージ、`step_id` は `null`）。 | `detail` の行・列を直す。非 ASCII のベアキーは不可（`"売上" = ...` と引用する）。 |
+| `FILE_UNREADABLE` | `static` | `error` | ファイルを開けない / UTF-8 で読めない（`--json` 時のみ。`step_id` は `null`）。 | パスと文字コードを確認する。 |
+| `JUDGE_QUESTIONS_MISSING` | `static` | `error` | `judge` に `questions` が無い、または空。 | `[steps.questions.<名前>]` を 1 つ以上書く。問いが無ければ判定するものが無い（[ノード → judge](nodes.md#judge)）。 |
+| `JUDGE_QUESTIONS_TOO_MANY` | `static` | `error` | 問いが 16 個を超えた（`detail` ＝ 件数と上限）。 | 問いを減らすか、`judge` step を分ける。委譲先は問いの数だけ逐次に推論するため上限がある。 |
+| `JUDGE_QUESTION_NAME_INVALID` | `static` | `error` | 問い名が `^[A-Za-z0-9_-]{1,64}$` に一致しない（`detail` ＝ その名前）。 | 半角英数字・`_`・`-` だけの名前にする。日本語のキーは使えない（`[steps.questions.route]` のように書く）。 |
+| `JUDGE_QUESTION_TYPE_INVALID` | `static` | `error` | 問いの `type` が無い、または `noul` / `choice` / `score` 以外（`detail` ＝ 問い名）。 | `type` を 3 種のいずれかにする。Yes/No は `noul`、択一は `choice`、段階評価は `score`。 |
+| `JUDGE_INSTRUCTIONS_MISSING` | `static` | `error` | 問いに `instructions` が無い、または空白のみ（`detail` ＝ 問い名）。 | 何を判定してほしいかを 1 文で書く。空文字は委譲先が受け付けない。 |
+| `JUDGE_CRITERIA_INVALID` | `static` | `error` | `criteria` の形が違う（`detail` ＝ 問い名と理由）。`noul` に付けた / `choice`・`score` に無い / `score` が配列でない / 空文字の選択肢 / ラベルが空か 64 字超。 | `noul` からは消す。`choice` は配列か表、`score` は**配列のみ**（段階に呼び出し側のラベルは付けられない）。 |
+| `JUDGE_CRITERIA_COUNT` | `static` | `error` | 選択肢・段階の数が範囲外（`detail` ＝ 件数と許容範囲）。 | `choice` は 2〜20 件、`score` は 2〜10 段にする。20 は委譲先が確率を測れる候補数の上限。 |
+| `JUDGE_CRITERIA_KEYS_UNEVEN` | `static` | `warning` | 構造化した `criteria` のキー集合が選択肢ごとに違う（`detail` ＝ 問い名）。 | 全選択肢を同じキーの組（例 `what` / `not_for` / `examples`）に揃える。揃えた方が判定が安定する。 |
+| `JUDGE_CHOICE_NO_FALLBACK` | `static` | `warning` | 表形式の `choice` に `other` という名前の選択肢が無い（`detail` ＝ 問い名）。 | 「どれにも当たらない」受け皿を `other = "..."` として足し、そこへ落ちたら人の確認へ回す分岐を書く。 |
+| `JUDGE_MODEL_MISSING` | `static` | `warning` | `judge` step に `model` が無い。 | 閾値を決めたときのモデル名を `model = "..."` に書く。書かないと委譲先の既定モデルが変わったときに気づけない。 |
 
 > この表は実装の `reason` 定数集合と**テストで突合**しています（`tests/test_reason_codes.py`）。
-> 片方だけ増やすとテストが落ちます。
+> 片方だけ増やすとテストが落ちます。「種別」も実装の `severity` と突合しています。
 
 ---
 

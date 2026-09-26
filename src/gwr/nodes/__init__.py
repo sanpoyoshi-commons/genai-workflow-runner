@@ -2,6 +2,9 @@
 
 from gwr.nodes.base import (
     DataError,
+    IssueCategory,
+    IssueSeverity,
+    IssueSink,
     Node,
     NodeContext,
     NodeError,
@@ -11,6 +14,9 @@ from gwr.nodes.base import (
 
 __all__ = [
     "Node",
+    "IssueCategory",
+    "IssueSeverity",
+    "IssueSink",
     "NodeError",
     "DataError",
     "NodeContext",

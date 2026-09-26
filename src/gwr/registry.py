@@ -7,6 +7,7 @@ adapters（llm/retrieval/code_interpreter）は実体を注入する都合で別
 from __future__ import annotations
 
 from gwr.adapters.code_interpreter import CodeInterpreterNode
+from gwr.adapters.judge import JudgeNode
 from gwr.adapters.llm import LLMNode
 from gwr.adapters.retrieval import RetrievalNode
 from gwr.nodes.base import Node
@@ -30,5 +31,6 @@ def build_default_registry() -> dict[str, Node]:
         LLMNode(),
         RetrievalNode(),
         CodeInterpreterNode(),
+        JudgeNode(),
     ]
     return {n.TYPE: n for n in nodes}

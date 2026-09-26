@@ -39,6 +39,8 @@ uv run gwr validate path/to/flow.toml --json
 ```
 
 - **`"ok": true` が返るまで直してください。** 終了コードは 0（問題なし）/ 1（あり）。
+- `warnings` は `ok` を落としません（直さなくても実行できます）が、見落としやすい書き方の
+  指摘なので読んでください。
 - 指摘の `reason` と直し方の対応表は [docs/cli.md の理由コード一覧](docs/cli.md#理由コード一覧)。
 - `validate` は外部に接続しません。何度実行しても安全です。
 
@@ -104,7 +106,7 @@ pre-commit run --hook-stage pre-push --all-files
 | `src/gwr/mcp_server.py` | MCP サーバ（stdio）。ツール 4 本と Resources |
 | `src/gwr/assets.py` | 同梱データ（仕様 1 枚・フロー例）の読み出し |
 | `src/gwr/nodes/` | ローカルノード（`file.load` / `file.transform` / `file.write` / `flow.validate`） |
-| `src/gwr/adapters/` | 委譲ノード（`llm` / `retrieval` / `code_interpreter`）と HTTP 層 |
+| `src/gwr/adapters/` | 委譲ノード（`llm` / `retrieval` / `code_interpreter` / `judge`）と HTTP 層 |
 | `src/gwr/contract.py` | `[[inputs]]` / `[[outputs]]` の契約と UI 仕様生成 |
 | `src/gwr/expr.py` | `$.` 参照（JMESPath）と `when`（CEL） |
 | `examples/` | フロー TOML の例（合成データのみ） |

@@ -17,7 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gwr.datatypes import TypeLevel
 
@@ -25,6 +25,32 @@ if TYPE_CHECKING:
     from gwr.config import ConfigManager
 
 OnError = Literal["fail", "skip", "default"]
+
+# 検証レポートの分類。`gwr.runner` がこれを import して `Issue` に載せる
+# （逆向きに import すると runner → nodes.base の依存と循環するため、ここが定義元）。
+IssueCategory = Literal["static", "dataflow", "type"]
+# `error` は `ok=False` にする。`warning` は別の配列（ValidationReport.warnings）へ入り、
+# `ok` を落とさない＝直さなくても実行できる書き方の指摘。
+IssueSeverity = Literal["error", "warning"]
+
+
+class IssueSink(Protocol):
+    """静的検査の記録先。`gwr.runner.ValidationReport` が満たす構造的な型。
+
+    ノードが `gwr.runner` を import すると循環するため、受け口を型として切り出す。
+    理由コードは **`add` の第 3 引数に文字列リテラルで書くこと**（`docs/cli.md` との突合が
+    AST で全数を拾えなくなる。tests/test_reason_codes.py）。
+    """
+
+    def add(
+        self,
+        category: IssueCategory,
+        step_id: str,
+        reason: str,
+        detail: str = "",
+        *,
+        severity: IssueSeverity = "error",
+    ) -> None: ...
 
 
 class NodeError(Exception):
@@ -98,3 +124,14 @@ class Node(ABC):
     ) -> dict[str, Any]:
         """解決済み入力・step 設定（ops/format/config_type 等）・実行コンテキストを受け、
         出力名→値の dict を返す。"""
+
+    def static_check(  # noqa: B027 — 既定「検査なし」が正しい。強制すると全ノードに空実装が要る
+        self, step: dict[str, Any], step_id: str, report: IssueSink
+    ) -> None:
+        """step 設定のノード固有な静的検査。既定は何もしない（多くのノードは不要）。
+
+        `Runner._static_checks` が、型が既知のノードについて 1 度だけ呼ぶ。実行前に落としたい
+        「書き方の誤り」をここに置く（`judge` の questions など）。Runner にノード固有の分岐を
+        増やさないための入口で、**理由コードはこのメソッドの中に文字列リテラルで書く**
+        （`docs/cli.md` との突合テストは `src/gwr` 全体を走査するので、ノード側に書いても拾える）。
+        """

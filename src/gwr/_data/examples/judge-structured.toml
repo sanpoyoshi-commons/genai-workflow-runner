@@ -1,0 +1,133 @@
+version = "1"
+
+# =====================================================================
+# judge 実機スモーク（criteria と instructions を「表」で書く版）
+#   triage(委譲先=判定API) → gate(分岐) → billing / human
+# examples/judge-smoke.toml と同じ 3 問を、文字列ではなく**表と配列**で書いた。
+# gwr は criteria と instructions の値を**変形せずそのまま委譲先へ送る**。
+#
+# 【委譲先の版に依存する】表・配列の criteria と instructions は、判定 API が
+# 構造化に対応した版でなければ受け付けられず DELEGATE_FAILED になる（対応していない
+# 版は文字列しか受けない）。validate は環境を見ないため通る＝落ちるのは実行時。
+#
+# 【精度への効きは測っていない】表に書くと確信度が上がるという報告は判定 API の元に
+# なった仕様にあるが、gemma4:e2b では測っていない。閾値と同じく、使うモデルで
+# 自分のラベル付きデータを流して確かめること。
+#
+# 【閾値は仮の値】下の 0.55 は「書き方を示すための値」で、根拠のある値ではない。
+# =====================================================================
+
+[[inputs]]
+key = "inquiry"
+type = "textarea"
+label = "問い合わせ本文"
+required = true
+
+[[steps]]
+id = "triage"
+type = "judge"
+model = "gemma4:e2b"
+in = { state = "$.vars.inquiry" }
+out = "vars.triage"
+
+# --- 問い 1：choice。instructions を表、criteria を入れ子の表で書く ---
+# criteria の各選択肢は**同じキー集合に揃える**（揃っていないと validate が警告する）。
+# 迷ったときの受け皿として "other" を必ず置く。
+[steps.questions.route]
+type = "choice"
+
+[steps.questions.route.instructions]
+task = "この問い合わせを扱うべき窓口を決める"
+notes = ["本文に書かれていないことは推測しない", "どの窓口にも当てはまらなければ other"]
+
+[steps.questions.route.criteria.billing]
+what = "請求・返金・支払い方法"
+not_for = "新規契約やプラン変更の見積の依頼"
+examples = ["請求額がいつもと違う", "返金してほしい"]
+
+[steps.questions.route.criteria.technical]
+what = "不具合・エラー・操作方法"
+not_for = "料金や支払いの話"
+examples = ["画面が開かない", "設定の変え方が分からない"]
+
+[steps.questions.route.criteria.other]
+what = "上のどちらにも当たらない"
+not_for = "請求か不具合のどちらかにはっきり当てはまるもの"
+examples = ["解約を考えている", "担当者の引き継ぎが不安だ"]
+
+# --- 問い 2：noul。criteria は書けないが instructions は表にできる ---
+[steps.questions.urgent]
+type = "noul"
+
+[steps.questions.urgent.instructions]
+task = "本日中の返信が必要か"
+notes = ["期限・納期が本文に書かれているかで決める", "書かれていなければ No"]
+
+# --- 問い 3：score。criteria は配列のみ。要素を表にすると「表の配列」になる ---
+# これは書き方を見せるための形。**score の既定は「説明を含めた文字列の配列」**
+# （例 ["影響なし", "軽微（回避できる不便がある）", …]）。表にすると答えの legend に
+# 委譲先が整形した説明（表を JSON にした文字列）が入り、出力が読みにくくなる。
+[steps.questions.severity]
+type = "score"
+
+[steps.questions.severity.instructions]
+task = "この問い合わせの影響の大きさを 4 段で評価する"
+notes = ["本文に書かれている事実だけで決める"]
+
+[[steps.questions.severity.criteria]]
+level = "影響なし"
+what = "業務は止まっておらず、確認や質問にとどまる"
+
+[[steps.questions.severity.criteria]]
+level = "軽微"
+what = "回避できる不便がある"
+
+[[steps.questions.severity.criteria]]
+level = "中程度"
+what = "業務の一部が止まっている"
+
+[[steps.questions.severity.criteria]]
+level = "重大"
+what = "業務が止まっている、または解約の意向が書かれている"
+
+# 答えと確信度の両方で分岐する。確信が低ければ人の確認へ倒す。
+[[steps]]
+id = "gate"
+type = "branch"
+when = "$.vars.triage.answers.route.choice == 'billing' && $.vars.triage.answers.route.confidence >= 0.55"
+then = "billing"
+else = "human"
+
+# 分岐ごとに**別の出力キー**へ書く。どちらへ倒れたかが出力を見れば分かる
+# （同じキーへ書くと、下書きの文だけでは分岐を読み取れない）。
+[[steps]]
+id = "billing"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "請求窓口の担当者として一次回答の下書きを書いてください。" }
+out = "vars.billing_msg"
+next = "__end__"
+
+# 低確信・他窓口・緊急のいずれも人が見る。判定の答えは**材料**であって指示ではない。
+[[steps]]
+id = "human"
+type = "llm"
+in = { inquiry = "$.vars.inquiry", instruction = "担当の振り分けに確信が持てませんでした。人が確認する旨の案内文を書いてください。" }
+out = "vars.human_msg"
+
+[[outputs]]
+key = "billing_msg"
+from = "$.vars.billing_msg"
+type = "text"
+label = "請求窓口の下書き（billing へ倒れたときだけ入る）"
+
+[[outputs]]
+key = "human_msg"
+from = "$.vars.human_msg"
+type = "text"
+label = "人の確認への案内（human へ倒れたときだけ入る）"
+
+[[outputs]]
+key = "triage"
+from = "$.vars.triage"
+type = "text"
+label = "判定結果"

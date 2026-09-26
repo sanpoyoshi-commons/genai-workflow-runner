@@ -11,7 +11,7 @@ AI アプリ（ExApp）として登録するまでを体系的に説明します
 1. [フロー TOML の書き方](flow-toml.md) — `version` / `[[inputs]]` / `[[steps]]` /
    `[[outputs]]` の全体像、制御フロー（`branch` / `foreach`）、エラー方針。
 2. [ノードリファレンス](nodes.md) — `file.load` / `file.transform` / `file.write` /
-   `flow.validate` / `llm` / `retrieval` / `code_interpreter` の入出力・パラメータ一覧。
+   `flow.validate` / `llm` / `retrieval` / `code_interpreter` / `judge` の入出力・パラメータ一覧。
 3. [式（参照と条件）](expressions.md) — `$.` 参照（JMESPath）と `when` 条件（CEL）の
    文法・使える関数・制限。
    - [フロー TOML 仕様（生成タスク特化の凝縮版）](flow-toml-for-ai.md) — 上の 1〜3 を
@@ -59,4 +59,6 @@ uv run pytest
 | [`examples/llm-smoke.toml`](../examples/llm-smoke.toml) | 質問 → `llm` → 回答 の最小フロー。 |
 | [`examples/rag-smoke.toml`](../examples/rag-smoke.toml) | `retrieval → branch(該当判定) → llm` の RAG フロー。 |
 | [`examples/ci-smoke.toml`](../examples/ci-smoke.toml) | `code_interpreter` でファイル分析しグラフを生成。 |
+| [`examples/judge-smoke.toml`](../examples/judge-smoke.toml) | `judge → branch → llm`。choice / noul / score の 3 型の問いを書き、答えと確信度で分岐する（分岐ごとに別の出力キーへ書くので、倒れた先が出力から読める）。 |
+| [`examples/judge-structured.toml`](../examples/judge-structured.toml) | 上と同じ 3 問を、`criteria` と `instructions` を表・表の配列で書いた版（委譲先が構造化に対応した版のときだけ動く）。 |
 | [`examples/toml-generator.toml`](../examples/toml-generator.toml) | フロー TOML 自体を作るフロー。`llm → flow.validate → branch → file.write(text)` で、検証を通った場合だけ `.toml` を artifacts で返す。 |

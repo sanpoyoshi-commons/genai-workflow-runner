@@ -16,7 +16,7 @@ from typing import Any
 from gwr.contract import parse_inputs, parse_outputs
 from gwr.datatypes import TypeLevel
 from gwr.registry import build_default_registry
-from gwr.runner import Runner, ValidationReport
+from gwr.runner import Issue, Runner, ValidationReport
 
 
 def _input_slots(flow: dict[str, Any]) -> dict[str, TypeLevel]:
@@ -90,21 +90,30 @@ def validate_file_safe(
     return validate_text_safe(text, registry)
 
 
+def _issue_to_dict(issue: Issue) -> dict[str, Any]:
+    """1 件の指摘を JSON 化可能な dict にする。
+
+    `step_id` は「特定できる step が無い」場合に null。空文字は出さない。
+    `issues` と `warnings` で形は同じ（どちらの配列に入っているかが重さを表す）。
+    """
+    return {
+        "category": issue.category,
+        "step_id": issue.step_id or None,
+        "reason": issue.reason,
+        "detail": issue.detail,
+    }
+
+
 def report_to_dict(report: ValidationReport) -> dict[str, Any]:
     """レポートを JSON 化可能な dict にする（`--json` と後続 MCP の共通形）。
 
-    `step_id` は「特定できる step が無い」場合に null。空文字は出さない。
+    `warnings` は 2026-09-23 に**追加**した配列で、`issues` と `ok` の意味は変えていない
+    （警告は `ok` を落とさない＝直さなくても実行できる）。既存の応答に対して増えるのは
+    このキーだけなので `SCHEMA_VERSION` は 1 のまま。
     """
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": report.ok,
-        "issues": [
-            {
-                "category": issue.category,
-                "step_id": issue.step_id or None,
-                "reason": issue.reason,
-                "detail": issue.detail,
-            }
-            for issue in report.issues
-        ],
+        "issues": [_issue_to_dict(issue) for issue in report.issues],
+        "warnings": [_issue_to_dict(issue) for issue in report.warnings],
     }

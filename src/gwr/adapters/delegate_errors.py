@@ -38,7 +38,10 @@ _AUTH_PREFIX = "KEYCLOAK_"
 _TIMEOUT_REASONS = frozenset({"HTTP_TIMEOUT", "POLL_TIMEOUT"})
 # HTTP ステータスからの分類（委譲先が応答を返した場合のみ status が入る）。
 _AUTH_STATUSES = frozenset({401, 403})
-_BUSY_STATUSES = frozenset({429})
+# 「時間をおいて再実行」で直り得るもの。429＝混雑、504＝委譲先が自分の予算内に終えられなかった。
+# 504 を足したのは judge（api が 600 秒の予算を使い切ると 504 を返す）だが、RAG・CI にも効く。
+# 恒常的に 504 を返す設定ミスも「時間をおいて再実行」と案内してしまうが、それは受け入れる。
+_RETRY_LATER_STATUSES = frozenset({429, 504})
 
 
 def classify(reason: str, status: int | None = None) -> str:
@@ -55,7 +58,7 @@ def classify(reason: str, status: int | None = None) -> str:
         return "DELEGATE_TIMEOUT"
     if status in _AUTH_STATUSES:
         return "DELEGATE_AUTH_FAILED"
-    if status in _BUSY_STATUSES:
+    if status in _RETRY_LATER_STATUSES:
         return "DELEGATE_TIMEOUT"
     return "DELEGATE_FAILED"
 

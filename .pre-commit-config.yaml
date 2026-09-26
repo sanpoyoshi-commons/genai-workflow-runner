@@ -40,7 +40,8 @@ repos:
       # FS スキャン（依存脆弱性 / 設定ミス / 秘密）。findings で非0終了。docker 未導入ならスキップ。
       - id: trivy
         name: trivy (fs vuln/misconfig/secret)
-        entry: bash -c 'if command -v docker >/dev/null 2>&1; then docker run --rm -v "$PWD":/src aquasec/trivy:latest fs --scanners vuln,misconfig,secret --exit-code 1 --quiet /src; else echo "[pre-push] docker 未導入のため trivy をスキップ"; fi'
+        # イメージは版とダイジェストで固定する（latest は差し替えが効くため）。
+        entry: bash -c 'if command -v docker >/dev/null 2>&1; then docker run --rm -v "$PWD":/src aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 fs --scanners vuln,misconfig,secret --exit-code 1 --quiet /src; else echo "[pre-push] docker 未導入のため trivy をスキップ"; fi'
         language: system
         pass_filenames: false
         stages: [pre-push]

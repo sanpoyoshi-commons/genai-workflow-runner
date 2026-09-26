@@ -3,6 +3,44 @@
 このファイルは利用者から見た変更点をまとめたものです。各リリースの詳細は
 GitHub Releases を参照してください。
 
+## 0.3.0 — 2026-09-26
+
+### Added
+
+- `judge` ノード: フロー中のテキストについて型付きの問い（`choice` / `noul` / `score`）を
+  立て、答えと確信度を判定 API から受け取る（ノードは 8 種になった）。gwr 自身は推論せず、
+  判定は委譲先が行う。問いは step に静的に書き、式解決されるのは `in.state` だけ
+- `gwr validate --json` の `warnings[]`: 直さなくても実行できる書き方の指摘。`ok` は
+  error だけで決まるため、既存の応答の意味は変わらない（`schema_version` は `1` のまま）
+- 委譲先への接続に `GWR_JUDGE_ENDPOINT` / `GWR_JUDGE_API_KEY` / `GWR_JUDGE_TIMEOUT`
+  （既定 660 秒）/ `GWR_JUDGE_CONNECT_TIMEOUT`（既定 10 秒）
+- `examples/judge-smoke.toml`: 判定の答えと確信度で分岐するフロー。分岐ごとに別の出力キーへ
+  書くので、どちらへ倒れたかが出力から読める
+- `examples/judge-structured.toml`: 同じ問いを `criteria` と `instructions` を表・表の配列で
+  書いた版（委譲先が構造化に対応した版でないと実行時に断られる）
+
+`judge` の `criteria` と `instructions` には表・配列も書けます（値は変形せずに委譲先へ
+渡します）。ただし委譲先が構造化に対応した版でないと `DELEGATE_FAILED` になり、また
+判定の精度にどう効くかは `gemma4:e2b` では測っていません。詳細は
+[ノードリファレンス](docs/nodes.md#judge) を参照してください。
+
+### Changed
+
+- 委譲先が `504` を返したとき、`DELEGATE_FAILED` ではなく `DELEGATE_TIMEOUT`
+  （「時間をおいて再実行してください」）を返すようになった。`llm` / `retrieval` /
+  `code_interpreter` にも同じように効く
+- ドキュメント: `criteria` の既定を問いの型ごとに示した。`choice` は表（ラベルが分岐の
+  条件式に出る）、`score` は説明を含めた文字列の配列（表にすると答えの `legend` に
+  委譲先が整形した説明が入り、出力が読みにくくなる）
+
+### Security
+
+- `.pre-commit-config.yaml` の trivy を、`latest` ではなく版とダイジェストで固定した
+  （`aquasec/trivy:0.74.0@sha256:62b1e65e…`）。`latest` は同じ名前で中身が差し替わるため、
+  スキャナ自身の供給網リスクを避ける
+
+---
+
 ## 0.2.0 — 2026-09-21
 
 ### Added

@@ -159,7 +159,7 @@ default = { columns = [], data = [] }   # 失敗時に書く値
 ops = [ ... ]
 ```
 
-委譲ノード（`llm` / `retrieval` / `code_interpreter`）の失敗も、この方針の対象です。
+委譲ノード（`llm` / `retrieval` / `code_interpreter` / `judge`）の失敗も、この方針の対象です。
 
 - **既定（`fail`）では止まります。** 委譲先に繋がらない・認証に失敗した・時間内に返って
   こないといった失敗は、そのステップでフロー全体を失敗させ、`error.reason` に
@@ -301,7 +301,7 @@ label = "要約メッセージ" # 見出し（text のとき "## ラベル" と�
 | 起動時のエラーメッセージ・トレースバック・サーバのログ | 運用者・フロー作成者 | url・ホスト名・status・応答本文。**出さないと直せない**ので出します |
 
 委譲先の接続先が不正な場合、`llm` は**起動時**に（接続先はアダプタ生成時に検証されるため）、
-`retrieval` / `code_interpreter` は**実行時**に落ちます。前者は `gwr serve` / `gwr run` が
+`retrieval` / `code_interpreter` / `judge` は**実行時**に落ちます。前者は `gwr serve` / `gwr run` が
 1 行のメッセージを出して終了し、後者は `DELEGATE_ENDPOINT_INVALID` として利用者へ返ります。
 
 ---

@@ -34,7 +34,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from gwr import assets
-from gwr.adapters.fakes import FakeCodeInterpreterAdapter, FakeLLMAdapter, FakeRetrievalAdapter
+from gwr.adapters.fakes import (
+    FakeCodeInterpreterAdapter,
+    FakeJudgeAdapter,
+    FakeLLMAdapter,
+    FakeRetrievalAdapter,
+)
 from gwr.app import WorkflowApp
 from gwr.contract import ContractError, parse_inputs, to_genai_ui_spec
 from gwr.validate import report_to_dict, validate_text_safe
@@ -166,6 +171,7 @@ def _fake_adapters() -> dict[str, Any]:
         "llm": FakeLLMAdapter(),
         "retrieval": FakeRetrievalAdapter(),
         "code_interpreter": FakeCodeInterpreterAdapter(),
+        "judge": FakeJudgeAdapter(),
     }
 
 
@@ -211,7 +217,7 @@ def build_server() -> MCPServer:
         description=(
             "フロー TOML の仕様 1 枚（Markdown）を返す。ツールは無引数。"
             "4 要素（version / [[inputs]] / [[steps]] / [[outputs]]）、スロット 3 名前空間"
-            "（files. / vars. / tables.）、ノード 7 種＋制御 2 種、file.transform の ops 8 種、"
+            "（files. / vars. / tables.）、ノード 8 種＋制御 2 種、file.transform の ops 8 種、"
             "参照は JMESPath・when は CEL という式言語の使い分け、"
             "理由コードと直し方の表が入っている。"
             "フローを書く前にこれを読むこと。"
@@ -224,8 +230,10 @@ def build_server() -> MCPServer:
         description=(
             "フロー TOML を検証する。**flow_toml にはファイルパスではなく TOML の本文を渡すこと**"
             "（パスを渡すとエラーになる）。"
-            "戻りは {schema_version, ok, issues[]}。"
+            "戻りは {schema_version, ok, issues[], warnings[]}。"
             "**ok が true になるまで issues を潰して直すこと。**"
+            "warnings は ok を落とさない（直さなくても実行できる）が、"
+            "見落としやすい書き方の指摘なので読むこと。"
             "issues[].reason は gwr_spec が返す仕様 1 枚の理由コード表に対応し、"
             "各コードに『典型的な直し方』が書いてある。issues[].step_id は該当 step の id"
             "（特定できない場合は null、[[outputs]] 由来は \"outputs\"）、"
@@ -241,8 +249,10 @@ def build_server() -> MCPServer:
             "フロー TOML を手元で実走して挙動を見る（検証ではなく実行）。先に gwr_validate を"
             "通してから使うこと。inputs は源内OSS のリクエストと同じ形で、スカラ入力は"
             "{\"<key>\": <値>} を直に置く。"
-            "LLM / 検索 / Code Interpreter は Fake に固定されており、実エンドポイントへは"
+            "LLM / 検索 / Code Interpreter / 判定は Fake に固定されており、実エンドポイントへは"
             "一切接続しない（環境変数が設定されていても委譲は起きない）。"
+            "**judge の Fake は判定していない**（選択肢の先頭を機械的に返すだけ）ので、"
+            "その答えを判断の根拠にしないこと。"
             "戻りは {outputs, artifacts_meta}（失敗時のみ error が付く）。"
             "artifacts_meta は名前・バイト数・行列数（表として読めた場合）のメタだけで、"
             "ファイル本体は返らない。"

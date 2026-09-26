@@ -127,7 +127,12 @@ def test_validate_ok_over_the_wire(client):
         "gwr_validate", {"flow_toml": (EXAMPLES / "poc.toml").read_text("utf-8")}
     )
     assert result.get("isError") is not True
-    assert result["structuredContent"] == {"schema_version": 1, "ok": True, "issues": []}
+    assert result["structuredContent"] == {
+        "schema_version": 1,
+        "ok": True,
+        "issues": [],
+        "warnings": [],
+    }
 
 
 @pytest.mark.parametrize(

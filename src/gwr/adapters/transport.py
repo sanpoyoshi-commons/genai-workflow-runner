@@ -95,12 +95,19 @@ class HttpxTransport:
     """httpx ベースの本番トランスポート（任意依存・遅延 import）。
 
     タイムアウト既定 300s（Azure CI 実装の既定に合わせる）。テストでは使わない。
+
+    `connect_timeout` を渡すと**接続だけを短く**分けられる（judge のように応答を長く
+    待つ委譲先向け。接続不能を 11 分待つ意味はない）。省略時は従来どおり単一の値を
+    全フェーズへ適用する＝既存の呼び出しは挙動が変わらない。
     """
 
-    def __init__(self, timeout: float = 300.0, verify: bool = True) -> None:
+    def __init__(
+        self, timeout: float = 300.0, verify: bool = True, connect_timeout: float | None = None
+    ) -> None:
         self.timeout = timeout
         # verify=False は自己署名 TLS（オンプレ版 の :8443 等）向け。既定は検証あり。
         self.verify = verify
+        self.connect_timeout = connect_timeout
 
     def request(
         self,
@@ -115,9 +122,14 @@ class HttpxTransport:
 
         # data= はフォーム body（application/x-www-form-urlencoded）。Keycloak token 端点向け。
         kwargs: dict[str, Any] = {"content": data} if data is not None else {"json": json}
+        # httpx.Timeout の構築は**この中**で行う（__init__ でやると httpx が無い環境＝
+        # gwr[http] 未導入でアダプタ生成だけで落ちる。遅延 import の意味が消える）。
+        timeout: Any = self.timeout
+        if self.connect_timeout is not None:
+            timeout = httpx.Timeout(self.timeout, connect=self.connect_timeout)
         try:
             resp = httpx.request(
-                method, url, headers=headers, timeout=self.timeout,
+                method, url, headers=headers, timeout=timeout,
                 verify=self.verify, **kwargs,
             )
         except httpx.TimeoutException as e:  # 接続/読み取りのタイムアウト

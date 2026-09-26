@@ -1,8 +1,10 @@
 """委譲先（源内OSS の ExApp）への本番アダプタ実装。
 
-- LLM : Azure OpenAI 互換（Chat Completions / Responses）。封筒ではなく OpenAI ネイティブ形。
-- RAG : genai-web 封筒（question 等 → outputs）。回答 Markdown を 1 件の Doc に写す。
-- CI  : genai-web 封筒（input_text + files → artifacts）。
+- LLM   : Azure OpenAI 互換（Chat Completions / Responses）。封筒ではなく OpenAI ネイティブ形。
+- RAG   : genai-web 封筒（question 等 → outputs）。回答 Markdown を 1 件の Doc に写す。
+- CI    : genai-web 封筒（input_text + files → artifacts）。
+- judge : オンプレ版 api の judge ルート。封筒ではなく専用の JSON 形
+          （`{model?, state, questions}` → `{model, answers, usage}`）。
 
 接続値（endpoint / api_key / user_id）は環境変数化して注入する想定（コードに秘匿値を持たない）。
 源内OSS の I/O 形（エンドポイント・JSON・キー）にのみ準拠するアダプタ。
@@ -20,6 +22,7 @@ from gwr.adapters.code_interpreter import (
     CodeInterpreterResponse,
 )
 from gwr.adapters.envelope_client import EnvelopeClient
+from gwr.adapters.judge import JudgeRequest, JudgeResponse
 from gwr.adapters.llm import LLMRequest, LLMResponse
 from gwr.adapters.retrieval import RetrievalRequest, RetrievalResponse
 from gwr.adapters.transport import HttpTransport, TransportError, assert_public_https
@@ -237,3 +240,79 @@ def _maybe_json(text: str) -> Any:
         except ValueError:
             return text
     return text
+
+
+class GennaiJudgeAdapter:
+    """オンプレ版 api の judge ルート。封筒ではなく専用の JSON 形で直接叩く。
+
+    送るのは `{state, questions[, model]}`、受けるのは `{model, answers, usage}`。
+    `questions` は**フロー TOML に書かれた形のまま**渡す（criteria・instructions の値が
+    表や配列でも変形しない）。判定の中身（プロンプト・確率の計算）は委譲先が持つ。
+
+    **応答本文をエラーに載せない。** 委譲先は判定対象（state）を反射し得るので、
+    `GennaiLLMAdapter` と違って body の先頭を detail に入れない（status だけ載せる）。
+
+    **再試行しない。** 委譲先が自分の予算の中で既に再試行しているため、ここでも試すと
+    待ち時間が掛け算になる。待ち時間は transport 側（`GWR_JUDGE_TIMEOUT`）で持つ。
+    """
+
+    def __init__(
+        self,
+        transport: HttpTransport,
+        endpoint: str,
+        *,
+        api_key: str = "",
+        user_id: str = "",
+        extra_headers: dict[str, str] | Callable[[], dict[str, str]] | None = None,
+        allow_insecure: bool = False,
+    ) -> None:
+        assert_public_https(endpoint, allow_insecure=allow_insecure)
+        self.transport = transport
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.user_id = user_id
+        # オンプレ版は Keycloak Bearer を載せる（本番＝None で x-api-key のまま）。
+        # callable なら invoke 毎に解決する（常駐 serve でトークンが失効しないように）。
+        self.extra_headers = extra_headers
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"content-type": "application/json"}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        if self.user_id:
+            headers["x-user-id"] = self.user_id
+        resolved = self.extra_headers() if callable(self.extra_headers) else self.extra_headers
+        if resolved:
+            headers.update(resolved)
+        return headers
+
+    def judge(self, request: JudgeRequest) -> JudgeResponse:
+        body: dict[str, Any] = {"state": request.state, "questions": request.questions}
+        if request.model:
+            body["model"] = request.model
+        resp = self.transport.request("POST", self.endpoint, headers=self._headers(), json=body)
+        if resp.status >= 400:
+            raise TransportError("JUDGE_HTTP_ERROR", f"status={resp.status}", status=resp.status)
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise TransportError(
+                "JUDGE_BAD_JSON", f"status={resp.status}", status=resp.status
+            ) from e
+        if not isinstance(data, dict):
+            raise TransportError("JUDGE_BAD_JSON", f"status={resp.status}", status=resp.status)
+        answers = data.get("answers")
+        # usage は**返った分だけ**拾う（委譲先は合計が嘘にならないよう値を欠落させる）。
+        raw_usage = data.get("usage")
+        usage = {}
+        if isinstance(raw_usage, dict):
+            usage = {
+                k: int(v)
+                for k, v in raw_usage.items()
+                if k in ("input_tokens", "output_tokens") and isinstance(v, (int, float))
+            }
+        return JudgeResponse(
+            model=str(data.get("model", "")),
+            answers=answers if isinstance(answers, dict) else {},
+            usage=usage,
+        )

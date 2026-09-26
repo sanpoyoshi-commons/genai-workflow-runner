@@ -1,9 +1,9 @@
-# 委譲先（LLM / RAG / CI）への接続と環境変数
+# 委譲先（LLM / RAG / CI / 判定）への接続と環境変数
 
-`llm` / `retrieval` / `code_interpreter` ノードは、推論・検索・コード実行を**ガバメントAI 源内 OSS の API へ
-委譲**します。gwr 自身はサンドボックスも LLM も持ちません。委譲先の
-**リクエスト/レスポンス契約は 3 つとも同一**（envelope `{inputs:{…}} → {outputs, artifacts?}`）で、
-**違うのは認証だけ**です。
+`llm` / `retrieval` / `code_interpreter` / `judge` ノードは、推論・検索・コード実行・判定を
+**外部の API へ委譲**します。gwr 自身はサンドボックスも LLM も持ちません。このうち
+RAG と CI の**リクエスト/レスポンス契約は同一**（envelope `{inputs:{…}} → {outputs, artifacts?}`）で、
+**違うのは認証だけ**です。LLM は OpenAI 互換、`judge` は専用の JSON 形で、どちらも封筒を使いません。
 
 > ここでいう envelope は**源内OSS の Web プロトコルのリクエスト/レスポンスの包み**で、gwr 内部の
 > `Envelope`（ステップ間でデータを渡すスロットの入れ物 →
@@ -15,7 +15,7 @@
 | **[オンプレ版（genai-deploy-onpre）](https://github.com/sanpoyoshi-commons/genai-deploy-onpre)** | 中央 `api` に集約 | Keycloak Bearer（`GWR_KC_*` で password grant） |
 
 `run` / `serve` は、対応する `GWR_*_ENDPOINT` が設定されたときだけ実委譲アダプタを
-配線します。未設定なら LLM は Fake、RAG/CI ノードはアダプタ未注入のままです
+配線します。未設定なら LLM は Fake、RAG/CI/judge ノードはアダプタ未注入のままです
 （後方互換）。
 
 ---
@@ -80,6 +80,46 @@ env から配線されます（`run` / `serve` の WebUI E2E 用）。
 
 ---
 
+## judge（`GWR_JUDGE_*`）
+
+`GWR_JUDGE_ENDPOINT` を設定すると `judge` ノードが実委譲になります。**委譲先は
+genai-ai-api-onpre の judge ルートにしかありません**（ガバメントAI 源内 OSS 本体には
+対応するルートがありません）。未設定なら実行時に `ADAPTER_MISSING` で止まります。
+
+| 環境変数 | 説明 |
+|---|---|
+| `GWR_JUDGE_ENDPOINT` | 判定端点。オンプレ版の例 `https://api:3443/api/judge`。未設定なら委譲しない。 |
+| `GWR_JUDGE_API_KEY` | 本番＝委譲先の `x-api-key`。オンプレ版は `GWR_KC_*` の Bearer を使うので不要。 |
+| `GWR_JUDGE_TIMEOUT` | 応答を待つ秒数（既定 **660**）。 |
+| `GWR_JUDGE_CONNECT_TIMEOUT` | 接続を待つ秒数（既定 **10**）。 |
+| `GWR_VERIFY_TLS` / `GWR_ALLOW_INSECURE` / `GWR_USER_ID` | RAG / CI と共通。 |
+
+認証は RAG / CI と同じ経路です（`GWR_KC_USER` があれば Keycloak Bearer、無ければ `x-api-key`）。
+
+### 待ち時間を 660 秒にしている理由
+
+**委譲先は自分の予算の中で既に再試行しています。** 既定では 1 回の試行が 300 秒、
+リクエスト全体が 600 秒で、予算を使い切ると 504 を返します。gwr 側の待ちがこれより短いと、
+**委譲先が答えを返す前に gwr が切ってしまいます**（それまでの推論が丸ごと無駄になります）。
+そのため既定を 600 秒より長い 660 秒にしてあります。委譲先の予算を変えたときは、
+**必ずこちらも上回るように**合わせてください。
+
+**gwr 側では再試行しません。** 再試行を両側に置くと待ち時間が掛け算になるためで、
+再試行は委譲先の 1 層だけに置いています。接続の待ちだけは 10 秒に分けてあります
+（接続できない相手を 11 分待つ意味はないため）。
+
+判定モデルが一定時間使われないと落ちるため、**読み込みからの初回は 2 分以上かかることが
+あります**（手元の実測で単一試行の最悪は約 153 秒）。問いは逐次に処理されるので、
+問いを増やすほど予算を使い切りやすくなります。
+
+> [!warning] 源内OSS の画面から ExApp として呼ぶ場合
+> その経路では gwr を呼ぶ側（worker）の待ち時間（`EXAPP_HTTP_TIMEOUT_MS`、既定 30 秒）が
+> 先に効きます。**そこに収まらないフローは、gwr や委譲先の設定に関係なく切れます**
+> （`judge` に限らず、時間のかかる `llm` / `retrieval` を含むフローも同じです）。
+> `gwr run` や `gwr serve` の `/invoke` を直接叩く場合は、この制約を受けません。
+
+---
+
 ## RAG の「該当なし」判定
 
 源内OSS の RAG は該当が無くても、**空ではなく「該当なし」の文章を 200 で返します**
@@ -120,6 +160,7 @@ else = "hit"
 GWR_LLM_ENDPOINT=https://.../llm   GWR_LLM_API_KEY=...
 GWR_RAG_ENDPOINT=https://.../rag   GWR_RAG_API_KEY=...
 GWR_CI_ENDPOINT=https://.../ci     GWR_CI_API_KEY=...
+# judge の委譲先は onpre の api にしかないため、本番（クラウド版）では設定できません。
 ```
 
 **オンプレ版** — LLM は ollama 直、RAG/CI は api + Keycloak：
@@ -130,6 +171,7 @@ GWR_LLM_MODEL=<pull済モデル>  GWR_LLM_ALLOW_INSECURE=true
 
 GWR_RAG_ENDPOINT=https://api:3443/api/law-rag/query
 GWR_CI_ENDPOINT=https://api:3443/api/code-interpreter/responses
+GWR_JUDGE_ENDPOINT=https://api:3443/api/judge
 GWR_KC_TOKEN_URL=http://keycloak:8080/realms/genai-realm/protocol/openid-connect/token
 GWR_KC_USER=<user>  GWR_KC_PASS=<pass>
 GWR_VERIFY_TLS=false  GWR_ALLOW_INSECURE=true

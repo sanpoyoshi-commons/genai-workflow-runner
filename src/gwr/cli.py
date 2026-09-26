@@ -35,6 +35,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if args.json:
         return _cmd_validate_json(args)
     report = validate_file(args.flow)
+    # 警告は ok を落とさない（直さなくても実行できる）が、必ず見せる。
+    for issue in report.warnings:
+        print(f"[warning] {issue.step_id}: {issue.reason} {issue.detail}".rstrip())
     if report.ok:
         print("OK: フロー検証に問題なし")
         return 0
@@ -182,16 +185,25 @@ def _load_no_result_markers(
     return markers
 
 
-def _wire_delegate_adapters(adapters: dict[str, Any]) -> None:
-    """RAG / CI 委譲先を env から配線する（serve/run の WebUI E2E 用）。
+# judge の待ち時間（秒）。委譲先は自分の予算（既定 600 秒）を使い切ってから 504 を返すので、
+# それより**明確に長く**待たないと gwr が先に切ってしまう（答えが出る直前に捨てることになる）。
+# 接続だけは短く分ける（接続できない相手を 11 分待つ意味はない）。
+DEFAULT_JUDGE_TIMEOUT = 660.0
+DEFAULT_JUDGE_CONNECT_TIMEOUT = 10.0
 
-    GWR_RAG_ENDPOINT / GWR_CI_ENDPOINT が設定された時のみ注入。オンプレ版は GWR_KC_* で Bearer、
-    本番は GWR_<RAG|CI>_API_KEY で x-api-key。自己署名は GWR_VERIFY_TLS=false / 内部宛は
-    GWR_ALLOW_INSECURE=true。未設定なら従来どおり LLM のみ（後方互換）。
+
+def _wire_delegate_adapters(adapters: dict[str, Any]) -> None:
+    """RAG / CI / judge 委譲先を env から配線する（serve/run の WebUI E2E 用）。
+
+    GWR_RAG_ENDPOINT / GWR_CI_ENDPOINT / GWR_JUDGE_ENDPOINT が設定された時のみ注入。
+    オンプレ版は GWR_KC_* で Bearer、本番は GWR_<RAG|CI|JUDGE>_API_KEY で x-api-key。
+    自己署名は GWR_VERIFY_TLS=false / 内部宛は GWR_ALLOW_INSECURE=true。
+    未設定なら従来どおり LLM のみ（後方互換）。
     """
     rag_ep = os.environ.get("GWR_RAG_ENDPOINT")
     ci_ep = os.environ.get("GWR_CI_ENDPOINT")
-    if not rag_ep and not ci_ep:
+    judge_ep = os.environ.get("GWR_JUDGE_ENDPOINT")
+    if not rag_ep and not ci_ep and not judge_ep:
         return
     from gwr.adapters.envelope_client import EnvelopeClient
     from gwr.adapters.transport import HttpxTransport
@@ -219,6 +231,22 @@ def _wire_delegate_adapters(adapters: dict[str, Any]) -> None:
         adapters["code_interpreter"] = GennaiCodeInterpreterAdapter(
             client, ci_ep, api_key=os.environ.get("GWR_CI_API_KEY", ""),
             user_id=user_id, extra_headers=extra,
+        )
+    if judge_ep:
+        from gwr.adapters.gennai import GennaiJudgeAdapter
+
+        # judge だけ別の transport を持つ（待ち時間が RAG/CI と違うため）。
+        # Keycloak のトークン取得は共通の transport のまま＝待ち方は既存と同じ。
+        judge_transport = HttpxTransport(
+            timeout=float(os.environ.get("GWR_JUDGE_TIMEOUT", str(DEFAULT_JUDGE_TIMEOUT))),
+            verify=os.environ.get("GWR_VERIFY_TLS", "true") != "false",
+            connect_timeout=float(
+                os.environ.get("GWR_JUDGE_CONNECT_TIMEOUT", str(DEFAULT_JUDGE_CONNECT_TIMEOUT))
+            ),
+        )
+        adapters["judge"] = GennaiJudgeAdapter(
+            judge_transport, judge_ep, api_key=os.environ.get("GWR_JUDGE_API_KEY", ""),
+            user_id=user_id, extra_headers=extra, allow_insecure=allow_insecure,
         )
 
 

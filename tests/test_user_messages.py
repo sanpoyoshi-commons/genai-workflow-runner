@@ -72,6 +72,12 @@ GENERIC_MESSAGE_REASONS = {
     # flow.validate の入力ミス・上限
     "FLOW_TOML_MISSING",
     "FLOW_TOML_TOO_LARGE",
+    # judge のフロー定義ミス（validate が先に落とす。利用者には直せない）
+    "STATE_MISSING",
+    "JUDGE_QUESTIONS_INVALID",
+    # judge の委譲先の応答が契約から外れた（運用者がログと委譲先を見る）
+    "JUDGE_ANSWER_INVALID",
+    "JUDGE_MODEL_MISMATCH",
     # 巨大ファイル保護（利用者には汎用文言。詳細は運用側で見る）
     "XLSX_TOO_LARGE",
     # Runner が止めるもの（フロー定義の誤り・保険の上限）

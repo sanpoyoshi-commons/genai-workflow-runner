@@ -1,8 +1,8 @@
 """logging — 値フリーの構造化ログ。
 
 不変条件：ログ API にセル値を渡す経路を作らない。イベントは固定スキーマのメタ情報のみ
-（step_id / node_type / in・out スロット名 / row_count / col_count / dtypes / duration /
-usage / status）。データ起因エラーは座標（行・列番号）＋理由コードのみ。
+（step_id / node_type / in・out スロット名 / row_count / col_count / question_count /
+dtypes / duration / usage / status）。データ起因エラーは座標（行・列番号）＋理由コードのみ。
 
 プラガブル：sink（出力先）／formatter（整形）／level（閾値）／redactor（任意のフィールド削減）。
 既定は「構造化 JSON・メタのみ・stdout」。
@@ -25,6 +25,7 @@ ALLOWED_FIELDS = frozenset(
         "out_slots",
         "row_count",
         "col_count",
+        "question_count",
         "dtypes",
         "duration_ms",
         "usage",
@@ -51,6 +52,8 @@ class LogEvent:
     out_slots: list[str] = field(default_factory=list)
     row_count: int | None = None
     col_count: int | None = None
+    # judge の問いの件数。件数であって値ではない（値フリー方針のまま）。
+    question_count: int | None = None
     dtypes: dict[str, str] | None = None
     duration_ms: float | None = None
     usage: dict[str, int] | None = None

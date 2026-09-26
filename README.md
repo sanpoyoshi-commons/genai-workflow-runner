@@ -128,6 +128,7 @@ JSON の生成・本番（クラウド版）とオンプレ版での実機テス
 | `branch` | 条件分岐（CEL 評価で step id へジャンプ） |
 | `foreach` | 反復（リストを走査し body を実行・集約） |
 | `llm` / `retrieval` / `code_interpreter` | 源内OSS の API への委譲（実体は源内OSS 側・テストは mock） |
+| `judge` | 型付きの問い（choice / noul / score）で判定し、答えと確信度を返す委譲 |
 
 ## フロー例（抜粋）
 
